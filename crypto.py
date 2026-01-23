@@ -15,13 +15,15 @@ st.set_page_config(page_title="👛 budget-bets", layout="wide")
 # 1. CORE ENGINE (ระบบหลังบ้าน)
 # ------------------------
 
-@st.cache_data(ttl=3600) # ดึงค่าเงินบาทชั่วโมงละครั้งพอ
+# 1. แก้ดึงเรทเงินบาท (ใช้ API ของ ExchangeRate-Host แทน)
+@st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
-        ticker = yf.Ticker("THB=X")
-        rate = ticker.info.get('regularMarketPrice') or ticker.info.get('previousClose')
-        return rate if rate else 35.0
-    except: return 35.0
+        # ใช้ API ที่เสถียรกว่า Yahoo ในช่วงนี้
+        res = requests.get("https://api.exchangerate-api.com/v4/latest/USD").json()
+        return res['rates']['THB']
+    except:
+        return 34.5  # ใส่เลขปัจจุบันไปเลย ดีกว่า 35.00
 
 def calculate_rsi(data, window=14):
     if len(data) < window: return 50 # ค่ากลางถ้าข้อมูลไม่พอ
@@ -57,16 +59,18 @@ def send_line_notification(message, target_user_id):
     except Exception as e:
         pass
 
-def get_market_data(symbol, is_crypto=True):
-    ticker_sym = f"{symbol}-USD" if is_crypto else symbol
+def get_market_data(symbol):
     try:
-        t = yf.Ticker(ticker_sym)
-        p = t.info.get('regularMarketPrice') or t.info.get('currentPrice')
-        h = t.history(period="1mo", interval="1h")
-        if p and not h.empty:
-            return p, h
-    except: pass
-    return None, pd.DataFrame()
+        # ดึงราคาตรงจาก Binance (เร็วและไม่ค่อยโดนบล็อก)
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
+        res = requests.get(url).json()
+        price_usd = float(res['price'])
+        
+        # สำหรับกราฟ RSI ยังใช้ Yahoo ได้ (เพราะดึงแค่ครั้งเดียว) 
+        # หรือถ้าไม่อยากเสี่ยง ให้ข้ามการเช็ค RSI ไปก่อนเพื่อดูว่าเหรียญขึ้นไหม
+        return price_usd, pd.DataFrame() 
+    except:
+        return None, pd.DataFrame()
 
 # ------------------------
 # 2. SMART FILTER LOGIC (ระบบกรองเทพ)
@@ -176,5 +180,6 @@ st.caption(f"ระบบอัปเดตอัตโนมัติทุก 
 
 time.sleep(REFRESH_SEC)
 st.rerun()
+
 
 
