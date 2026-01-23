@@ -92,8 +92,8 @@ def fetch_smart_picks(budget_thb, usd_thb):
                 p_thb = price_usd * usd_thb
                 if p_thb <= budget_thb:
                     rsi_val = calculate_rsi(hist)
-                    if 30 <= rsi_val <= 58:
-                    # if 10 <= rsi_val <= 90: #test_perfomance
+                    # if 30 <= rsi_val <= 58:
+                    if 0 <= rsi_val <= 100: #test_perfomance
                         picks.append({'symbol': sym, 'price_thb': p_thb, 'rsi': rsi_val})
             
             if len(picks) >= 6: break
@@ -180,6 +180,7 @@ st.caption(f"ระบบอัปเดตอัตโนมัติทุก 
 
 time.sleep(REFRESH_SEC)
 st.rerun()
+
 
 
 
