@@ -81,7 +81,7 @@ def fetch_smart_picks(budget_thb, usd_thb):
     try:
         res = requests.get("https://api.llama.fi/protocols").json()
         candidates = [p for p in res if p.get('symbol') and p.get('symbol').upper() not in ['USDT', 'USDC', 'DAI']]
-        candidates = sorted(candidates, key=lambda x: x.get('tvl', 0), reverse=True)[:20]
+        candidates = sorted(candidates, key=lambda x: x.get('tvl', 0), reverse=True)[:40]
         
         picks = []
         for c in candidates:
@@ -92,8 +92,8 @@ def fetch_smart_picks(budget_thb, usd_thb):
                 p_thb = price_usd * usd_thb
                 if p_thb <= budget_thb:
                     rsi_val = calculate_rsi(hist)
-                    # if 30 <= rsi_val <= 58:
-                    if 0 <= rsi_val <= 100: #test_perfomance
+                    if 30 <= rsi_val <= 58:
+                    # if 0 <= rsi_val <= 100: #test_perfomance
                         picks.append({'symbol': sym, 'price_thb': p_thb, 'rsi': rsi_val})
             
             if len(picks) >= 6: break
@@ -180,6 +180,7 @@ st.caption(f"ระบบอัปเดตอัตโนมัติทุก 
 
 time.sleep(REFRESH_SEC)
 st.rerun()
+
 
 
 
