@@ -7,7 +7,7 @@ import time
 # ------------------------
 # 0. CONFIG & INITIAL SETUP
 # ------------------------
-LINE_TOKEN = "ใส่_TOKEN_ของคุณที่นี่"
+LINE_TOKEN = st.secrets["LINE_TOKEN"]
 REFRESH_SEC = 60 
 
 st.set_page_config(page_title="🚀 Smart Portfolio Builder", layout="wide")
@@ -155,4 +155,5 @@ st.divider()
 st.caption(f"ระบบอัปเดตอัตโนมัติทุก {REFRESH_SEC} วินาที | เหรียญที่แสดงกรองจาก งบ <= {budget:,.0f} ฿ และ RSI 30-58")
 
 time.sleep(REFRESH_SEC)
+
 st.rerun()
