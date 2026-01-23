@@ -76,7 +76,6 @@ def get_market_data(symbol):
 # 2. SMART FILTER LOGIC (ระบบกรองเทพ)
 # ------------------------
 
-@st.cache_data(ttl=300) # จำรายชื่อเหรียญไว้ 5 นาที
 def fetch_smart_picks(budget_thb, usd_thb):
     try:
         res = requests.get("https://api.llama.fi/protocols").json()
@@ -180,6 +179,7 @@ st.caption(f"ระบบอัปเดตอัตโนมัติทุก 
 
 time.sleep(REFRESH_SEC)
 st.rerun()
+
 
 
 
