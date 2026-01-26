@@ -63,7 +63,8 @@ def fetch_smart_picks(budget_thb, usd_thb, is_filtering=False):
                     else:
                         if p_thb <= budget_thb:
                             rsi_val = calculate_rsi(df['Close'])
-                            if 30 <= rsi_val <= 58:
+                            # if 30 <= rsi_val <= 58:
+                            if 0 <= rsi_val <= 100:
                                 picks.append({'symbol': sym, 'price_thb': p_thb, 'hist': df, 'rsi': rsi_val})
                 if len(picks) >= 6: break
         return picks
@@ -130,4 +131,5 @@ st.caption(f"หน้านี้จะอัปเดตราคา/กรา
 # --- AUTO REFRESH ---
 time.sleep(REFRESH_SEC)
 st.rerun()
+
 
