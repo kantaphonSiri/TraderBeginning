@@ -75,7 +75,7 @@ def fetch_smart_picks(budget_thb, usd_thb, is_filtering=False):
 # ------------------------
 with st.sidebar:
     st.title("🎯 Settings")
-    budget = st.number_input("งบต่อไม้ (บาท):", min_value=0, value=0, step=500)
+    budget = st.number_input("งบต่อไม้ (บาท):", min_value=0, value=2000, step=500)
     target_pct = st.slider("เป้ากำไร (%)", 5, 100, 15)
     stop_loss = st.slider("จุดตัดขาดทุน (%)", 3, 30, 7)
     
@@ -114,7 +114,7 @@ else:
                 st.line_chart(item['hist']['Close'].tail(24), height=100)
                 
                 # ระบบคำนวณกำไร (ใช้ Session State เพื่อให้ค่าไม่หายตอนรีเฟรช)
-                cost = st.number_input(f"ทุน {item['symbol']} (฿):", key=f"c_{item['symbol']}", value=2000)
+                cost = st.number_input(f"ทุน {item['symbol']} (฿):", key=f"c_{item['symbol']}", value=0.0)
                 if cost > 0:
                     profit = ((item['price_thb'] - cost) / cost) * 100
                     if profit >= target_pct:
@@ -130,3 +130,4 @@ st.caption(f"หน้านี้จะอัปเดตราคา/กรา
 # --- AUTO REFRESH ---
 time.sleep(REFRESH_SEC)
 st.rerun()
+
