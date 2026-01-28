@@ -29,7 +29,6 @@ def get_exchange_rate():
 
 # 2. คำนวณ Advanced Indicators
 def add_indicators(df):
-    # ตรวจสอบว่าข้อมูลเป็นแบบ Multi-index หรือไม่ (แก้ปัญหา yfinance รุ่นใหม่)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     
@@ -61,7 +60,6 @@ def get_coin_data(symbol):
         df = yf.download(ticker_sym, period="1mo", interval="1h", progress=False)
         if not df.empty:
             df = add_indicators(df)
-            # ดึงราคาปัจจุบันเป็น float แน่นอน
             last_price = float(df['Close'].iloc[-1])
             return last_price, df
     except: pass
@@ -72,7 +70,9 @@ def get_coin_data(symbol):
 # ------------------------
 with st.sidebar:
     st.title("🎯 Strategy Settings")
-    budget = st.number_input("งบต่อ 1 เหรียญ (บาท):", min_value=0, value=100000)
+    
+    # ปรับให้เริ่มต้นเป็นค่าว่าง (None)
+    budget = st.number_input("งบต่อ 1 เหรียญ (บาท):", min_value=0.0, value=None, placeholder="กรอกงบเพื่อเริ่มกรอง...")
     
     st.subheader("Signal Filters")
     min_rsi = st.slider("RSI Oversold Level", 10, 40, 30)
@@ -86,38 +86,46 @@ usd_thb = get_exchange_rate()
 st.title("👛 Budget-Bets Alpha")
 st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | **Refreshed:** {datetime.now().strftime('%H:%M:%S')}")
 
-# รายชื่อเหรียญ
+# รายชื่อเหรียญเป้าหมาย
 symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOT', 'AVAX', 'LINK', 'NEAR', 'SUI', 'OP', 'ARB']
 
 # --- PROCESSING ---
-display_items = []
-with st.spinner("🔍 วิเคราะห์ตลาดด้วย EMA + MACD + RSI..."):
+scanned_items = []
+with st.spinner("🔍 กำลังวิเคราะห์ข้อมูลตลาด..."):
     for s in symbols:
         price_usd, df = get_coin_data(s)
         if price_usd and df is not None:
             price_thb = price_usd * usd_thb
-            if budget == 0 or price_thb <= budget:
-                # ดึงค่าสุดท้ายออกมาเป็น Scalar (ตัวเลขเดี่ยว) เพื่อป้องกัน ValueError
-                last_close = float(df['Close'].iloc[-1])
-                last_rsi = float(df['RSI'].iloc[-1])
-                last_ema20 = float(df['EMA20'].iloc[-1])
-                last_macd = float(df['MACD'].iloc[-1])
-                last_signal = float(df['Signal'].iloc[-1])
-                
-                # Logic การคัดกรองสัญญาณ (เปรียบเทียบตัวเลขต่อตัวเลข)
-                is_oversold = last_rsi <= min_rsi
-                is_bullish_ema = last_close > last_ema20 if use_ema_filter else True
-                is_macd_cross = last_macd > last_signal
+            
+            last_close = float(df['Close'].iloc[-1])
+            last_rsi = float(df['RSI'].iloc[-1])
+            last_ema20 = float(df['EMA20'].iloc[-1])
+            last_macd = float(df['MACD'].iloc[-1])
+            last_signal = float(df['Signal'].iloc[-1])
+            
+            is_oversold = last_rsi <= min_rsi
+            is_bullish_ema = last_close > last_ema20 if use_ema_filter else True
+            is_macd_cross = last_macd > last_signal
 
-                display_items.append({
-                    'symbol': s, 'price_thb': price_thb, 'df': df,
-                    'rsi': last_rsi, 'macd': last_macd, 'signal': last_signal,
-                    'status': "BUY SIGNAL" if (is_oversold or (is_bullish_ema and is_macd_cross)) else "WATCHING"
-                })
+            scanned_items.append({
+                'symbol': s, 'price_thb': price_thb, 'df': df,
+                'rsi': last_rsi, 'macd': last_macd, 'signal': last_signal,
+                'status': "BUY SIGNAL" if (is_oversold or (is_bullish_ema and is_macd_cross)) else "WATCHING"
+            })
+
+# --- FILTERING LOGIC ---
+if budget is None or budget == 0:
+    # โหมดเริ่มต้น: แสดง Top 6 เหรียญแรกที่สแกนได้
+    display_items = scanned_items[:6]
+    st.info("💡 โหมดแนะนำ: แสดง Top 6 เหรียญยอดนิยม (กรอกงบประมาณที่ Sidebar เพื่อเริ่มการกรอง)")
+else:
+    # โหมดกรอง: แสดงเฉพาะเหรียญที่อยู่ในงบ
+    display_items = [item for item in scanned_items if item['price_thb'] <= budget]
+    st.success(f"🔍 โหมดกรอง: แสดงเหรียญที่ราคาไม่เกิน {budget:,.2f} บาท")
 
 # --- DISPLAY ---
 if not display_items:
-    st.warning("⚠️ ไม่พบเหรียญที่ตรงตามเงื่อนไข ลองเพิ่มงบประมาณหรือปรับ Filter")
+    st.warning("⚠️ ไม่พบเหรียญที่ตรงตามเงื่อนไขงบประมาณของคุณ")
 else:
     cols = st.columns(3)
     for idx, item in enumerate(display_items):
