@@ -63,7 +63,6 @@ with st.sidebar:
                 diff = ((current_p - m['cost']) / m['cost']) * 100
                 with st.expander(f"📌 {sym}: {diff:+.2f}%", expanded=True):
                     st.write(f"ทุน: {m['cost']:,.2f} | ตลาด: {current_p:,.2f}")
-                    # เมื่อลบจากที่นี่ สั่ง rerun เพื่อล้าง Toggle หน้าหลักด้วย
                     if st.button(f"นำออก", key=f"side_del_{sym}"):
                         del st.session_state.portfolio[sym]
                         st.rerun()
@@ -81,53 +80,56 @@ if not budget: display_symbols = display_symbols[:6]
 cols = st.columns(2)
 for idx, s in enumerate(display_symbols):
     item = scanned_results[s]
+    is_in_port = s in st.session_state.portfolio
+    
     with cols[idx % 2]:
         with st.container(border=True):
-            # --- แก้ Bug Toggle ค้าง ---
-            head_l, head_r = st.columns([3, 1])
+            # --- เปลี่ยนจาก Toggle เป็น Icon Pin Button ---
+            head_l, head_r = st.columns([4, 1])
             head_l.subheader(f"🪙 {s}")
             
-            # เช็คสถานะจริงจาก Portfolio ทุกครั้งที่วาด UI
-            is_in_port = s in st.session_state.portfolio
-            
-            # ใช้ Toggle โดยผูกสถานะกับพอร์ต
-            add_to_port = head_r.toggle("📌 Save", value=is_in_port, key=f"tg_save_{s}")
+            # ปุ่ม Icon Pin (สลับสัญลักษณ์ตามสถานะ)
+            pin_label = "📍 Pinned" if is_in_port else "📌 Pin"
+            if head_r.button(pin_label, key=f"pin_btn_{s}"):
+                if is_in_port:
+                    del st.session_state.portfolio[s]
+                else:
+                    # ถ้ากด Pin ครั้งแรก ให้จองที่ไว้ในพอร์ตด้วยราคาปัจจุบัน
+                    st.session_state.portfolio[s] = {'cost': item['price'], 'target': 15, 'stop': 7}
+                st.rerun()
             
             st.metric("ราคาตลาด", f"{item['price']:,.2f} ฿")
             
-            # Chart (วาดเส้นต่อเนื่อง)
+            # Chart
             fig = go.Figure(data=[go.Scatter(y=item['df']['Close'].tail(48).values, line=dict(color='#00ffcc'))])
             fig.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # ดึงข้อมูลเดิมมาโชว์ (ถ้ามี)
-            m = st.session_state.portfolio.get(s, {'cost': item['price'], 'target': 15, 'stop': 7})
-            
-            # ส่วน Slide กรอกข้อมูลจะโผล่ตาม Toggle
-            if add_to_port:
+            # แสดงส่วนตั้งค่าเฉพาะเมื่อเหรียญถูก Pin แล้ว (Slide ลงมา)
+            if is_in_port:
                 st.divider()
+                m = st.session_state.portfolio[s]
+                
+                # ช่องกรอกทุนและสไลเดอร์
                 entry_p = st.number_input(f"ทุน {s}:", value=float(m['cost']), key=f"in_cost_{s}")
                 ca, cb = st.columns(2)
                 tgt = ca.slider(f"เป้ากำไร (%)", 5, 100, int(m['target']), key=f"sl_tgt_{s}")
                 stp = cb.slider(f"จุดคัด (%)", 3, 50, int(m['stop']), key=f"sl_stp_{s}")
                 
-                # บันทึก/อัปเดตข้อมูลเมื่อมีการเปลี่ยนแปลง
+                # อัปเดตข้อมูลใน Session State ทันทีเมื่อมีการเปลี่ยนค่า
                 new_entry = {'cost': entry_p, 'target': tgt, 'stop': stp}
-                if st.session_state.portfolio.get(s) != new_entry:
+                if st.session_state.portfolio[s] != new_entry:
                     st.session_state.portfolio[s] = new_entry
-                    # ไม่ใช้ st.rerun() ตรงนี้เพื่อป้องกันการขัดจังหวะขณะพิมพ์เลข
-            
-            # กรณี User ปิด Toggle หน้าหลักเอง
-            elif not add_to_port and is_in_port:
-                del st.session_state.portfolio[s]
-                st.rerun()
-
-            # แสดงกำไร/ขาดทุน Real-time
-            if is_in_port:
-                diff = ((item['price'] - m['cost']) / m['cost']) * 100
-                if diff >= m['target']: st.success(f"🚀 SELL: {diff:+.2f}%")
-                elif diff <= -m['stop']: st.error(f"🛑 STOP: {diff:+.2f}%")
-                else: st.info(f"📊 Profit: {diff:+.2f}%")
+                
+                # แสดงสถานะกำไร/ขาดทุน
+                diff = ((item['price'] - entry_p) / entry_p) * 100
+                if diff >= tgt: st.success(f"🚀 SELL: {diff:+.2f}%")
+                elif diff <= -stp: st.error(f"🛑 STOP: {diff:+.2f}%")
+                else: 
+                    st.info(f"📊 Profit: {diff:+.2f}%")
+                    st.progress(min(max((diff / tgt), 0.0), 1.0))
+            else:
+                st.caption("💡 กดปุ่ม 📌 Pin เพื่อวางแผนการเทรดและบันทึกลงพอร์ต")
 
 time.sleep(REFRESH_SEC)
 st.rerun()
