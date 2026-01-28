@@ -7,12 +7,13 @@ import os
 import pickle
 import plotly.graph_objects as go
 
-# ------------------------
-# 0. CONFIG & DB
-# ------------------------
+# ---------------------------------------------------------
+# 1. CONFIG & DATABASE (ตั้งค่าเบื้องต้นและฐานข้อมูล)
+# ---------------------------------------------------------
 DB_FILE = "crypto_v5_stable.pkl"
 st.set_page_config(page_title="Crypto AI Strategist", layout="wide")
 
+# เตรียม Session State สำหรับเก็บข้อมูล
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
 if 'master_data' not in st.session_state:
@@ -22,9 +23,13 @@ if 'master_data' not in st.session_state:
     else:
         st.session_state.master_data = {}
 
-# 1. ฟังก์ชันดึงรายชื่อ Top 100
+# ---------------------------------------------------------
+# 2. CORE FUNCTIONS (หัวใจการทำงาน)
+# ---------------------------------------------------------
+
 @st.cache_data(ttl=3600)
 def get_top_100_symbols():
+    """ดึงรายชื่อเหรียญ Top 100 ตาม Market Cap จาก Coingecko"""
     try:
         url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1"
         data = requests.get(url, timeout=10).json()
@@ -32,72 +37,92 @@ def get_top_100_symbols():
     except:
         return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE']
 
-# 2. ฟังก์ชันดึงราคาแบบกลุ่ม (ลดการโดน Rate Limit)
 def sync_data_safe():
+    """ดึงราคาจาก Yahoo Finance แบบกลุ่ม (Batch) เพื่อไม่ให้โดนบล็อก"""
     symbols = get_top_100_symbols()
-    usd_thb = yf.Ticker("THB=X").fast_info['last_price']
+    try:
+        usd_thb = yf.Ticker("THB=X").fast_info['last_price']
+    except:
+        usd_thb = 35.0 # Fallback
     
-    # แบ่งกลุ่มสแกนทีละ 20 เหรียญเพื่อความปลอดภัย
-    batch_size = 20
-    with st.status("📡 กำลังดึงข้อมูลแบบปลอดภัย (Batch Mode)...") as status:
+    new_data = st.session_state.master_data.copy()
+    success_count, fail_count = 0, 0
+    batch_size = 20 # แบ่งกลุ่มละ 20 เพื่อความปลอดภัย
+    
+    with st.status("📡 AI Scanning Market (Batch Mode)...") as status:
         for i in range(0, len(symbols), batch_size):
             batch = symbols[i:i+batch_size]
             tickers = [f"{s}-USD" for s in batch]
             
             try:
-                # ดึงข้อมูลรวดเดียว 20 ตัว
+                # ดึงข้อมูล 1 เดือน รายชั่วโมง แบบเงียบๆ (progress=False)
                 data_group = yf.download(tickers, period="1mo", interval="1h", group_by='ticker', progress=False, timeout=20)
                 
                 for s in batch:
                     try:
                         df = data_group[f"{s}-USD"] if len(tickers) > 1 else data_group
-                        if not df.empty and df['Close'].iloc[-1] > 0:
+                        if not df.empty and not pd.isna(df['Close'].iloc[-1]):
                             df = df.ffill()
-                            st.session_state.master_data[s] = {
+                            new_data[s] = {
                                 'price': float(df['Close'].iloc[-1]) * usd_thb,
                                 'base_price': float(df['Close'].mean()) * usd_thb,
                                 'df': df,
                                 'rank': symbols.index(s) + 1
                             }
-                    except: continue
-                
-                time.sleep(1) # พัก 1 วินาทีกันโดนแบน
-            except: continue
+                            success_count += 1
+                            print(f"✅ [SUCCESS] {s}") # โชว์ใน Log หลังบ้าน
+                        else:
+                            fail_count += 1
+                            print(f"❌ [FAILED] {s}: No Price Data")
+                    except:
+                        fail_count += 1
+                        continue
+                time.sleep(1.2) # พักเบรกกันโดนแบน
+            except:
+                print(f"⚠️ [BATCH ERROR] Group {i//batch_size + 1} failed")
+                continue
         
+        st.session_state.master_data = new_data
         with open(DB_FILE, 'wb') as f:
-            pickle.dump(st.session_state.master_data, f)
-        status.update(label="✅ ซิงค์สำเร็จ!", state="complete")
+            pickle.dump(new_data, f)
+        status.update(label=f"Scan Complete: OK {success_count} | Fail {fail_count}", state="complete")
+    
+    st.toast(f"อัปเดต {success_count} เหรียญสำเร็จ", icon="✅")
 
-# ------------------------
-# 3. SIDEBAR (Real-time Enter Sync)
-# ------------------------
+# ---------------------------------------------------------
+# 3. SIDEBAR (เมนูด้านข้าง)
+# ---------------------------------------------------------
 with st.sidebar:
-    st.header("💼 My Portfolio")
+    st.title("💼 My Portfolio")
     if st.session_state.portfolio:
         for sym, m in list(st.session_state.portfolio.items()):
             with st.expander(f"📌 {sym}", expanded=True):
                 st.write(f"ทุน: **{m['cost']:,.2f}**")
-                if st.button(f"นำออก", key=f"del_{sym}"):
+                if st.button(f"นำ {sym} ออก", key=f"side_del_{sym}"):
                     del st.session_state.portfolio[sym]
                     st.rerun()
+    else:
+        st.caption("ยังไม่มีเหรียญที่ปักหมุด")
+        
     st.divider()
     budget = st.number_input("งบประมาณ (บาท):", min_value=0.0, step=1000.0)
-    if st.button("🔄 อัปเดตราคาใหม่ทั้งหมด"):
+    if st.button("🔄 อัปเดตราคาตลาดใหม่"):
         sync_data_safe()
         st.rerun()
 
-# ------------------------
-# 4. MAIN UI
-# ------------------------
+# ---------------------------------------------------------
+# 4. MAIN UI (หน้าจอหลัก)
+# ---------------------------------------------------------
 st.title("🛡️ Crypto Strategist Pro")
 
+# ถ้าเปิดมาครั้งแรกไม่มีข้อมูล ให้โหลดทันที
 if not st.session_state.master_data:
     sync_data_safe()
     st.rerun()
 
-# กรองตามงบ
+# กรองเหรียญตามงบ
 display_list = [s for s, d in st.session_state.master_data.items() if budget == 0 or d['price'] <= budget]
-display_list = display_list[:100] if budget > 0 else display_list[:6]
+display_list = display_list[:100] if budget > 0 else display_list[:6] # ถ้าไม่กรองโชว์ 6 ตัวแรก
 
 cols = st.columns(2)
 for idx, s in enumerate(display_list):
@@ -109,25 +134,22 @@ for idx, s in enumerate(display_list):
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
             h1.subheader(f"{icon} {s}")
-            if h2.button("📍" if is_pinned else "📌", key=f"p_btn_{s}"):
+            if h2.button("📍" if is_pinned else "📌", key=f"btn_p_{s}"):
                 if is_pinned: del st.session_state.portfolio[s]
                 else: st.session_state.portfolio[s] = {'cost': data['price'], 'target': 15.0, 'stop': 7.0}
                 st.rerun()
             
             st.metric("ราคาตลาด", f"{data['price']:,.2f} ฿")
             
-            # --- ช่องกรอกราคาทุน (Enter to Update) ---
             if is_pinned:
                 m = st.session_state.portfolio[s]
-                # ใช้ key เพื่อผูกกับ session และกด Enter เพื่อบันทึก
+                # ช่องกรอกราคาทุนแบบ Enter to Update
                 new_cost = st.number_input(
                     f"ระบุราคาทุน {s} (กด Enter):",
                     value=float(m['cost']),
                     format="%.2f",
-                    key=f"cost_input_{s}"
+                    key=f"cost_in_{s}"
                 )
-                
-                # ถ้ามีการเปลี่ยนค่า (จาก Enter) ให้บันทึกและ rerun ทันที
                 if new_cost != m['cost']:
                     st.session_state.portfolio[s]['cost'] = new_cost
                     st.rerun()
@@ -135,11 +157,8 @@ for idx, s in enumerate(display_list):
                 c1, c2 = st.columns(2)
                 st.session_state.portfolio[s]['target'] = c1.slider("เป้า %", 5, 100, int(m['target']), key=f"t_{s}")
                 st.session_state.portfolio[s]['stop'] = c2.slider("คัด %", 3, 50, int(m['stop']), key=f"s_{s}")
-                
-                profit = ((data['price'] - new_cost) / new_cost) * 100
-                st.info(f"📊 กำไรปัจจุบัน: {profit:+.2f}%")
             
-            # กราฟ
-            fig = go.Figure(data=[go.Scatter(y=data['df']['Close'].tail(50).values, mode='lines', line=dict(color='#00ffcc'))])
+            # กราฟเส้นแบบ Simple
+            fig = go.Figure(data=[go.Scatter(y=data['df']['Close'].tail(50).values, mode='lines', line=dict(color='#00ffcc', width=2))])
             fig.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, key=f"g_{s}", config={'displayModeBar': False})
