@@ -13,7 +13,36 @@ import plotly.graph_objects as go
 DB_FILE = "crypto_v11_responsive.pkl"
 # ปรับ layout="wide" เพื่อให้หน้าจอใช้พื้นที่ได้เต็มที่
 st.set_page_config(page_title="Budget-bet Pro", layout="wide")
-
+# ---------------------------------------------------------
+# CSS บังคับให้ Columns ไม่ยุบตัวบนมือถือ (Force 2 Columns)
+# ---------------------------------------------------------
+st.markdown("""
+    <style>
+    /* ตรวจสอบ class ที่เป็น container ของ columns */
+    [data-testid="column"] {
+        width: calc(50% - 1rem) !important;
+        flex: 1 1 calc(50% - 1rem) !important;
+        min-width: calc(50% - 1rem) !important;
+    }
+    
+    /* ปรับระยะห่างให้พอดี */
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        gap: 0.5rem !important;
+    }
+    
+    /* ลดขนาด font เล็กน้อยเพื่อให้เหมาะกับ 2 คอลัมน์บนมือถือ */
+    @media (max-width: 640px) {
+        .stMarkdown div p, .stMetric div {
+            font-size: 12px !important;
+        }
+        h3 {
+            font-size: 16px !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
 if 'dash_mode' not in st.session_state:
@@ -199,3 +228,4 @@ for idx, s in enumerate(display_list):
                 plot_bgcolor='rgba(0,0,0,0)'
             )
             st.plotly_chart(fig_p, width='stretch', key=f"g_{s}", config={'displayModeBar': False})
+
