@@ -22,24 +22,36 @@ def get_exchange_rate():
 # ปรับปรุงการดึงข้อมูล Binance ให้รองรับการตรวจสอบ Error
 def get_binance_data(symbol):
     sym = symbol.upper() + "USDT"
-    base_url = "https://api.binance.com/api/v3"
+    # รายชื่อสำรองของ Endpoint เพื่อกระจายความเสี่ยง
+    endpoints = [
+        f"https://api1.binance.com/api/v3",
+        f"https://api2.binance.com/api/v3",
+        f"https://api3.binance.com/api/v3"
+    ]
+    
+    import random
+    base_url = random.choice(endpoints) # สุ่ม Endpoint เพื่อเลี่ยงการโดนบล็อก IP
+    
     try:
-        # ดึงราคา
-        p_res = requests.get(f"{base_url}/ticker/price?symbol={sym}", timeout=5)
+        # ดึงราคาปัจจุบัน
+        p_res = requests.get(f"{base_url}/ticker/price?symbol={sym}", timeout=7)
+        
+        # ถ้าติด Error 451 หรือ 403 (โดนบล็อกพื้นที่หรือไอพี)
         if p_res.status_code != 200:
             return symbol, None, None
-        
+            
         price_usd = float(p_res.json()['price'])
         
         # ดึงกราฟ
-        k_res = requests.get(f"{base_url}/klines?symbol={sym}&interval=1h&limit=50", timeout=5)
-        if k_res.status_code != 200:
-            return symbol, price_usd, pd.DataFrame()
-            
-        df = pd.DataFrame(k_res.json(), columns=['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QuoteAssetVolume', 'NumTrades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
-        df['Close'] = df['Close'].astype(float)
-        return symbol, price_usd, df
-    except:
+        k_res = requests.get(f"{base_url}/klines?symbol={sym}&interval=1h&limit=50", timeout=7)
+        if k_res.status_code == 200:
+            df = pd.DataFrame(k_res.json(), columns=['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QuoteAssetVolume', 'NumTrades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
+            df['Close'] = df['Close'].astype(float)
+            return symbol, price_usd, df
+        
+        return symbol, price_usd, pd.DataFrame()
+    except Exception as e:
+        print(f"Log Error for {symbol}: {e}") # ดูได้ใน Streamlit Cloud Console
         return symbol, None, None
 
 def calculate_rsi(prices, window=14):
@@ -112,3 +124,4 @@ st.divider()
 st.caption("Auto-refreshing in 60s...")
 time.sleep(REFRESH_SEC)
 st.rerun()
+
