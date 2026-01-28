@@ -10,12 +10,13 @@ from datetime import datetime
 # 0. CONFIG & SESSION STATE
 # ------------------------
 REFRESH_SEC = 60
-st.set_page_config(page_title="Budget-Bets Pro Dashboard", layout="wide")
+st.set_page_config(page_title="Budget-Bets Alpha Pro", layout="wide")
 
+# ระบบความจำของพอร์ต
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {} 
 
-# 1. ระบบดึงข้อมูลพื้นฐาน
+# 1. ฟังก์ชันดึงรายชื่อเหรียญ (API Coingecko)
 @st.cache_data(ttl=3600)
 def get_top_symbols(limit=30):
     try:
@@ -24,8 +25,10 @@ def get_top_symbols(limit=30):
         exclude = ['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'PYUSD']
         return [coin['symbol'].upper() for coin in data if coin['symbol'].upper() not in exclude]
     except:
-        return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA']
+        # สำรองข้อมูลกรณี API ล่ม
+        return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'DOT']
 
+# 2. ฟังก์ชันดึงอัตราแลกเปลี่ยน (API Yahoo Finance)
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
@@ -35,27 +38,36 @@ def get_exchange_rate():
     except: return 35.0
 
 # ------------------------
-# 2. DATA PROCESSING
+# 3. DATA FETCHING (ดึงข้อมูลตลาด)
 # ------------------------
 usd_thb = get_exchange_rate()
 top_symbols = get_top_symbols(30)
 scanned_results = {}
 
-with st.spinner("🤖 อัปเดตราคาล่าสุด..."):
+with st.spinner("🤖 กำลังอัปเดตราคาและกราฟจาก API..."):
     for s in top_symbols:
         try:
-            df = yf.download(f"{s}-USD", period="1mo", interval="1h", progress=False)
+            # ดึงข้อมูล 7 วัน ความละเอียด 15 นาที เพื่อให้กราฟ "ไม่เป็นจุด"
+            df = yf.download(f"{s}-USD", period="7d", interval="15m", progress=False)
             if not df.empty:
-                scanned_results[s] = {'price': float(df['Close'].iloc[-1]) * usd_thb, 'df': df}
+                # แก้ปัญหา MultiIndex Columns
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                
+                # --- แก้ Bug กราฟเป็นจุด (Data Cleaning) ---
+                df = df.ffill() # เติมค่าว่างด้วยค่าก่อนหน้า
+                
+                price_thb = float(df['Close'].iloc[-1]) * usd_thb
+                scanned_results[s] = {'price': price_thb, 'df': df}
         except: continue
 
 # ------------------------
-# 3. UI SIDEBAR
+# 4. UI SIDEBAR (พอร์ตของคุณ)
 # ------------------------
 with st.sidebar:
     st.title("💼 My Portfolio")
     if not st.session_state.portfolio:
-        st.info("พอร์ตว่างเปล่า")
+        st.info("ยังไม่มีเหรียญที่ปักหมุด")
     else:
         for sym, m in list(st.session_state.portfolio.items()):
             if sym in scanned_results:
@@ -67,69 +79,86 @@ with st.sidebar:
                         del st.session_state.portfolio[sym]
                         st.rerun()
     st.divider()
-    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, value=0.0)
+    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, value=0.0, help="ถ้าใส่ 0 จะแสดงทุกเหรียญ")
 
 # ------------------------
-# 4. MAIN APP DISPLAY
+# 5. MAIN DASHBOARD
 # ------------------------
 st.title("👛 Smart Trading Dashboard")
+st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | อัปเดตล่าสุด: {datetime.now().strftime('%H:%M:%S')}")
 
+# กรองเหรียญตามงบประมาณ
 display_symbols = [s for s, d in scanned_results.items() if budget == 0 or d['price'] <= budget]
 if not budget: display_symbols = display_symbols[:6]
 
 cols = st.columns(2)
 for idx, s in enumerate(display_symbols):
     item = scanned_results[s]
-    is_in_port = s in st.session_state.portfolio
+    is_pinned = s in st.session_state.portfolio
     
     with cols[idx % 2]:
         with st.container(border=True):
-            # --- เปลี่ยนจาก Toggle เป็น Icon Pin Button ---
-            head_l, head_r = st.columns([4, 1])
-            head_l.subheader(f"🪙 {s}")
+            # --- ส่วนหัว: ชื่อเหรียญ + ปุ่ม Icon Pin ---
+            h_left, h_right = st.columns([4, 1])
+            h_left.subheader(f"🪙 {s}")
             
-            # ปุ่ม Icon Pin (สลับสัญลักษณ์ตามสถานะ)
-            pin_label = "📍 Pinned" if is_in_port else "📌 Pin"
-            if head_r.button(pin_label, key=f"pin_btn_{s}"):
-                if is_in_port:
+            # ปุ่ม Pin/Pinned (เปลี่ยนสีและไอคอนตามสถานะ)
+            pin_icon = "📍 Pinned" if is_pinned else "📌"
+            if h_right.button(pin_icon, key=f"btn_{s}"):
+                if is_pinned:
                     del st.session_state.portfolio[s]
                 else:
-                    # ถ้ากด Pin ครั้งแรก ให้จองที่ไว้ในพอร์ตด้วยราคาปัจจุบัน
                     st.session_state.portfolio[s] = {'cost': item['price'], 'target': 15, 'stop': 7}
                 st.rerun()
             
             st.metric("ราคาตลาด", f"{item['price']:,.2f} ฿")
             
-            # Chart
-            fig = go.Figure(data=[go.Scatter(y=item['df']['Close'].tail(48).values, line=dict(color='#00ffcc'))])
-            fig.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            # --- กราฟเส้น (Smooth Area Chart) ---
+            # ใช้ข้อมูล 100 จุดล่าสุดเพื่อให้เห็นความเคลื่อนไหวชัดๆ
+            plot_df = item['df']['Close'].tail(100)
+            fig = go.Figure(data=[go.Scatter(
+                y=plot_df.values, 
+                mode='lines',
+                line=dict(color='#00ffcc', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(0, 255, 204, 0.1)'
+            )])
+            fig.update_layout(
+                height=120, 
+                margin=dict(l=0,r=0,t=0,b=0), 
+                xaxis_visible=False, 
+                yaxis_visible=False, 
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # แสดงส่วนตั้งค่าเฉพาะเมื่อเหรียญถูก Pin แล้ว (Slide ลงมา)
-            if is_in_port:
+            # --- ส่วนจัดการกลยุทธ์ (จะโผล่เมื่อ Pin เท่านั้น) ---
+            if is_pinned:
                 st.divider()
                 m = st.session_state.portfolio[s]
                 
-                # ช่องกรอกทุนและสไลเดอร์
-                entry_p = st.number_input(f"ทุน {s}:", value=float(m['cost']), key=f"in_cost_{s}")
-                ca, cb = st.columns(2)
-                tgt = ca.slider(f"เป้ากำไร (%)", 5, 100, int(m['target']), key=f"sl_tgt_{s}")
-                stp = cb.slider(f"จุดคัด (%)", 3, 50, int(m['stop']), key=f"sl_stp_{s}")
+                # ช่องกรอกทุนและ Slider ปรับเป้า
+                entry_p = st.number_input(f"ต้นทุน {s} (บาท):", value=float(m['cost']), key=f"cost_{s}")
+                c1, c2 = st.columns(2)
+                tgt = c1.slider(f"เป้ากำไร (%)", 5, 100, int(m['target']), key=f"tgt_{s}")
+                stp = c2.slider(f"จุดคัด (%)", 3, 50, int(m['stop']), key=f"stp_{s}")
                 
-                # อัปเดตข้อมูลใน Session State ทันทีเมื่อมีการเปลี่ยนค่า
-                new_entry = {'cost': entry_p, 'target': tgt, 'stop': stp}
-                if st.session_state.portfolio[s] != new_entry:
-                    st.session_state.portfolio[s] = new_entry
+                # อัปเดตค่าเข้าหน่วยความจำ
+                st.session_state.portfolio[s] = {'cost': entry_p, 'target': tgt, 'stop': stp}
                 
-                # แสดงสถานะกำไร/ขาดทุน
+                # แสดงผลกำไร/ขาดทุน
                 diff = ((item['price'] - entry_p) / entry_p) * 100
-                if diff >= tgt: st.success(f"🚀 SELL: {diff:+.2f}%")
-                elif diff <= -stp: st.error(f"🛑 STOP: {diff:+.2f}%")
-                else: 
-                    st.info(f"📊 Profit: {diff:+.2f}%")
+                if diff >= tgt:
+                    st.success(f"🚀 **ถึงเป้าขาย:** {diff:+.2f}%")
+                elif diff <= -stp:
+                    st.error(f"🛑 **ต้องตัดขาดทุน:** {diff:+.2f}%")
+                else:
+                    st.info(f"📊 กำไรปัจจุบัน: {diff:+.2f}%")
                     st.progress(min(max((diff / tgt), 0.0), 1.0))
             else:
-                st.caption("💡 กดปุ่ม 📌 Pin เพื่อวางแผนการเทรดและบันทึกลงพอร์ต")
+                st.caption("💡 กดปุ่ม 📌 Pin เพื่อเริ่มวางแผนและบันทึกเข้าพอร์ต")
 
+# Auto-Refresh ทุก 1 นาที
 time.sleep(REFRESH_SEC)
 st.rerun()
