@@ -151,7 +151,7 @@ for idx, s in enumerate(display_list):
                 if is_pinned: del st.session_state.portfolio[s]
                 else: st.session_state.portfolio[s] = {'cost': data['price'], 'target': 15.0, 'stop': 7.0}
                 st.rerun()
-            st.markdown(f"<span style='background:{color}; color:black; padding:2px 8px; border-radius:10px; font-weight:bold; font-size:10px;'>AI: {advice}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span style='background:{color}; color:black; padding:2px 8px; border-radius:10px; font-weight:bold; font-size:10px;'>{advice}</span>", unsafe_allow_html=True)
             growth = ((data['price'] - data['base_price']) / data['base_price']) * 100
             st.metric("ราคาตลาด", f"{data['price']:,.2f} ฿", f"{growth:+.2f}% (30d)")
             if is_pinned:
@@ -166,3 +166,4 @@ for idx, s in enumerate(display_list):
             fig = go.Figure(data=[go.Scatter(y=data['df']['Close'].tail(50).values, mode='lines', line=dict(color=color, width=2))])
             fig.update_layout(height=120, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, width='stretch', key=f"g_{s}", config={'displayModeBar': False})
+
