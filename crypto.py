@@ -7,109 +7,120 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # ------------------------
-# 0. SETUP & MEMORY
+# 0. CONFIG & SESSION STATE
 # ------------------------
-st.set_page_config(page_title="Budget-Bets Alpha", layout="wide")
+REFRESH_SEC = 60
+st.set_page_config(page_title="Budget-Bets Slider Pro", layout="wide")
 
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}
+    st.session_state.portfolio = {} 
 
-# ฟังก์ชันดึงข้อมูลแบบคลีน (เช็ค Null และ Forward Fill)
-def get_clean_data(symbol):
+# 1. ระบบดึงข้อมูลพื้นฐาน
+@st.cache_data(ttl=3600)
+def get_top_symbols(limit=30):
     try:
-        # ดึงข้อมูล 7 วัน ราย 15 นาที เพื่อความต่อเนื่อง
-        df = yf.download(f"{symbol}-USD", period="7d", interval="15m", progress=False)
-        if df.empty: return None
-        
-        # จัดการข้อมูลที่ซ้ำและเติมค่าว่าง (ป้องกันกราฟขาดตอน)
-        df = df[~df.index.duplicated(keep='last')]
-        df = df.ffill() 
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df
+        url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={limit}&page=1"
+        data = requests.json(requests.get(url, timeout=5).text)
+        exclude = ['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'PYUSD']
+        return [coin['symbol'].upper() for coin in data if coin['symbol'].upper() not in exclude]
     except:
-        return None
+        return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA']
+
+@st.cache_data(ttl=3600)
+def get_exchange_rate():
+    try:
+        rate = yf.Ticker("THB=X").fast_info['last_price']
+        return float(rate) if 30 < rate < 45 else 35.0
+    except: return 35.0
+
+def add_indicators(df):
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    close = df['Close'].astype(float)
+    df['EMA20'] = close.ewm(span=20, adjust=False).mean()
+    return df
 
 # ------------------------
-# 1. SIDEBAR
+# UI SIDEBAR (Dashboard Summary)
 # ------------------------
 with st.sidebar:
-    st.title("💼 My Portfolio")
-    for sym, m in list(st.session_state.portfolio.items()):
-        with st.expander(f"📌 {sym}"):
-            st.write(f"ทุน: {m['cost']:,.2f} | เป้า: +{m['target']}%")
-            if st.button(f"นำออก", key=f"del_{sym}"):
-                del st.session_state.portfolio[sym]
-                st.rerun()
+    st.title("💼 My Active Portfolio")
+    if not st.session_state.portfolio:
+        st.write("พอร์ตว่างเปล่า...")
+    else:
+        for sym, data in list(st.session_state.portfolio.items()):
+            with st.expander(f"📌 {sym}"):
+                st.write(f"ทุน: {data['cost']:,.0f} ฿")
+                st.write(f"เป้า: +{data['target']}% | คัด: -{data['stop']}%")
+                if st.button(f"ลบ {sym}", key=f"del_{sym}"):
+                    del st.session_state.portfolio[sym]
+                    st.rerun()
+    
     st.divider()
-    # ปรับ Default เป็น 0 เพื่อให้เห็นทุกเหรียญตอนเริ่ม
-    budget = st.number_input("งบประมาณต่อเหรียญ (บาท):", min_value=0.0, value=0.0, help="ถ้าใส่ 0 จะแสดงทุกเหรียญ")
+    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, value=None, placeholder="กรองราคา...")
 
-# ------------------------
-# 2. MAIN APP
-# ------------------------
-st.title("👛 Smart Trading Panel")
-usd_thb = 35.0 # แนะนำให้ใช้ API ดึงค่าจริงในอนาคต
+# --- MAIN APP ---
+usd_thb = get_exchange_rate()
+st.title("👛 Budget-Bets: Slider Strategy")
+st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | {datetime.now().strftime('%H:%M:%S')}")
 
-symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOT', 'AVAX']
+top_symbols = get_top_symbols(30)
+scanned_items = []
+
+with st.spinner("🤖 กำลังสแกนตลาด..."):
+    for s in top_symbols:
+        try:
+            df = yf.download(f"{s}-USD", period="1mo", interval="1h", progress=False)
+            if not df.empty:
+                df = add_indicators(df)
+                price_thb = float(df['Close'].iloc[-1]) * usd_thb
+                if budget is None or budget == 0 or price_thb <= budget:
+                    scanned_items.append({'symbol': s, 'price_thb': price_thb, 'df': df})
+        except: continue
+
+# --- DISPLAY ---
+display_items = scanned_items if budget else scanned_items[:6]
 cols = st.columns(2)
-display_count = 0
 
-for s in symbols:
-    df = get_clean_data(s)
-    if df is not None:
-        price_thb = float(df['Close'].iloc[-1]) * usd_thb
-        
-        # --- LOGIC งบประมาณ ---
-        # ถ้า budget เป็น 0 หรือ ราคาเหรียญ <= budget ให้แสดงผล
-        if budget == 0 or price_thb <= budget:
-            with cols[display_count % 2]:
-                with st.container(border=True):
-                    st.subheader(f"🪙 {s}")
-                    st.metric("ราคาตลาด", f"{price_thb:,.2f} ฿")
-                    
-                    # กราฟต่อเนื่องแบบ Area Chart
-                    fig = go.Figure(data=[go.Scatter(
-                        y=df['Close'].values, 
-                        mode='lines',
-                        line=dict(color='#00ffcc', width=2),
-                        fill='tozeroy',
-                        fillcolor='rgba(0, 255, 204, 0.1)'
-                    )])
-                    fig.update_layout(height=130, margin=dict(l=0,r=0,t=0,b=0), 
-                                    xaxis_visible=False, yaxis_visible=False,
-                                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+for idx, item in enumerate(display_items):
+    with cols[idx % 2]:
+        with st.container(border=True):
+            st.subheader(f"🪙 {item['symbol']}")
+            st.metric("ราคาปัจจุบัน", f"{item['price_thb']:,.2f} ฿")
+            
+            # Chart
+            fig = go.Figure(data=[go.Scatter(y=item['df']['Close'].tail(48), line=dict(color='#00ffcc'))])
+            fig.update_layout(height=120, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
+            # --- แผงควบคุมแบบ Slider (สวยและใช้ง่ายกว่าเดิม) ---
+            st.divider()
+            m = st.session_state.portfolio.get(item['symbol'], {'cost': 0.0, 'target': 15, 'stop': 7})
+            
+            # กรอกทุนยังใช้พิมพ์เพื่อความแม่นยำ
+            entry_p = st.number_input(f"ราคาที่ซื้อ {item['symbol']} (บาท):", value=float(m['cost']), key=f"cost_{item['symbol']}")
+            
+            # เป้าหมายและจุดคัดใช้ Slider
+            col_a, col_b = st.columns(2)
+            with col_a:
+                tgt = st.slider(f"เป้ากำไร (%)", 5, 100, int(m['target']), key=f"tgt_{item['symbol']}")
+            with col_b:
+                stp = st.slider(f"จุดตัดขาดทุน (%)", 3, 50, int(m['stop']), key=f"stp_{item['symbol']}")
+            
+            if entry_p > 0:
+                st.session_state.portfolio[item['symbol']] = {'cost': entry_p, 'target': tgt, 'stop': stp}
+                diff = ((item['price_thb'] - entry_p) / entry_p) * 100
+                
+                # Alert UI
+                if diff >= tgt:
+                    st.success(f"🚀 **ถึงเวลาขาย!** กำไรของคุณคือ {diff:+.2f}%")
+                elif diff <= -stp:
+                    st.error(f"🛑 **ตัดขาดทุนด่วน!** ขาดทุน {diff:+.2f}%")
+                else:
+                    # ใช้ Progress Bar แสดงระยะทางสู่เป้าหมาย (ลูกเล่นใหม่)
+                    progress = min(max((diff / tgt), 0.0), 1.0)
+                    st.info(f"📊 กำไรปัจจุบัน: {diff:+.2f}% (เป้าหมาย {tgt}%)")
+                    st.progress(progress)
 
-                    # --- Interactive Slide Panel ---
-                    in_port = s in st.session_state.portfolio
-                    # เมื่อกด Toggle แผงควบคุมจะ Slide ออกมา
-                    active = st.toggle(f"วางแผนเทรด {s}", key=f"active_{s}", value=in_port)
-                    
-                    if active:
-                        st.markdown("---")
-                        m = st.session_state.portfolio.get(s, {'cost': price_thb, 'target': 10, 'stop': 5})
-                        
-                        # 1. กรอกทุน (Default เป็นราคาปัจจุบันเพื่อให้ใช้ง่าย)
-                        new_cost = st.number_input(f"ราคาทุนที่ซื้อ {s}:", value=float(m['cost']), key=f"cost_{s}")
-                        
-                        # 2. Slide ปรับเป้าหมาย
-                        c1, c2 = st.columns(2)
-                        new_target = c1.slider("เป้ากำไร (%)", 1, 100, int(m['target']), key=f"tgt_{s}")
-                        new_stop = c2.slider("จุดตัดขาดทุน (%)", 1, 50, int(m['stop']), key=f"stop_{s}")
-                        
-                        # บันทึกสถานะ
-                        st.session_state.portfolio[s] = {'cost': new_cost, 'target': new_target, 'stop': new_stop}
-                        
-                        # คำนวณกำไร/ขาดทุน
-                        pnl = ((price_thb - new_cost) / new_cost) * 100
-                        if pnl >= new_target: st.success(f"🚀 ถึงเป้าขาย: {pnl:+.2f}%")
-                        elif pnl <= -new_stop: st.error(f"🛑 จุดตัดขาดทุน: {pnl:+.2f}%")
-                        else: st.info(f"📈 กำไรปัจจุบัน: {pnl:+.2f}%")
-                    
-            display_count += 1
-
-# ระบบ Auto-Refresh ทุก 1 นาที
-time.sleep(60)
+# Auto Refresh
+time.sleep(REFRESH_SEC)
 st.rerun()
