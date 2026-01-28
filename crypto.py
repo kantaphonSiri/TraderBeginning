@@ -10,19 +10,17 @@ from datetime import datetime
 # 0. CONFIG & SESSION STATE
 # ------------------------
 REFRESH_SEC = 60
-st.set_page_config(page_title="Budget-Bets Personal Strategy", layout="wide")
+st.set_page_config(page_title="Budget-Bets Slider Pro", layout="wide")
 
-# ระบบจำพอร์ตและแผนการเทรดแยกเหรียญ
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {} 
-    # โครงสร้าง: {'BTC': {'cost': 2100000, 'target': 15, 'stop': 7}, ...}
 
 # 1. ระบบดึงข้อมูลพื้นฐาน
 @st.cache_data(ttl=3600)
 def get_top_symbols(limit=30):
     try:
         url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={limit}&page=1"
-        data = requests.get(url, timeout=5).json()
+        data = requests.json(requests.get(url, timeout=5).text)
         exclude = ['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'PYUSD']
         return [coin['symbol'].upper() for coin in data if coin['symbol'].upper() not in exclude]
     except:
@@ -31,18 +29,13 @@ def get_top_symbols(limit=30):
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
-        ticker = yf.Ticker("THB=X")
-        rate = ticker.fast_info['last_price']
+        rate = yf.Ticker("THB=X").fast_info['last_price']
         return float(rate) if 30 < rate < 45 else 35.0
     except: return 35.0
 
 def add_indicators(df):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     close = df['Close'].astype(float)
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).abs().rolling(14).mean()
-    df['RSI'] = 100 - (100 / (1 + (gain / loss.replace(0, 0.001))))
     df['EMA20'] = close.ewm(span=20, adjust=False).mean()
     return df
 
@@ -50,9 +43,9 @@ def add_indicators(df):
 # UI SIDEBAR (Dashboard Summary)
 # ------------------------
 with st.sidebar:
-    st.title("💼 Active Portfolio")
+    st.title("💼 My Active Portfolio")
     if not st.session_state.portfolio:
-        st.write("ยังไม่มีเหรียญที่ติดตาม")
+        st.write("พอร์ตว่างเปล่า...")
     else:
         for sym, data in list(st.session_state.portfolio.items()):
             with st.expander(f"📌 {sym}"):
@@ -67,13 +60,13 @@ with st.sidebar:
 
 # --- MAIN APP ---
 usd_thb = get_exchange_rate()
-st.title("👛 Personal Strategy Scanner")
+st.title("👛 Budget-Bets: Slider Strategy")
 st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | {datetime.now().strftime('%H:%M:%S')}")
 
 top_symbols = get_top_symbols(30)
 scanned_items = []
 
-with st.spinner("🤖 ระบบกำลังวิเคราะห์ข้อมูล..."):
+with st.spinner("🤖 กำลังสแกนตลาด..."):
     for s in top_symbols:
         try:
             df = yf.download(f"{s}-USD", period="1mo", interval="1h", progress=False)
@@ -99,36 +92,34 @@ for idx, item in enumerate(display_items):
             fig.update_layout(height=120, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # --- ส่วนการตั้งค่าแผนการเทรดรายเหรียญ ---
+            # --- แผงควบคุมแบบ Slider (สวยและใช้ง่ายกว่าเดิม) ---
             st.divider()
-            st.write("📝 **วางแผนการเทรด:**")
-            
-            # ดึงค่าเดิมจาก Memory
             m = st.session_state.portfolio.get(item['symbol'], {'cost': 0.0, 'target': 15, 'stop': 7})
             
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                entry_p = st.number_input(f"ทุน (บาท)", value=float(m['cost']), key=f"cost_{item['symbol']}")
-            with c2:
-                tgt = st.number_input(f"เป้ากำไร (%)", value=int(m['target']), key=f"tgt_{item['symbol']}")
-            with c3:
-                stp = st.number_input(f"จุดคัด (%)", value=int(m['stop']), key=f"stp_{item['symbol']}")
+            # กรอกทุนยังใช้พิมพ์เพื่อความแม่นยำ
+            entry_p = st.number_input(f"ราคาที่ซื้อ {item['symbol']} (บาท):", value=float(m['cost']), key=f"cost_{item['symbol']}")
+            
+            # เป้าหมายและจุดคัดใช้ Slider
+            col_a, col_b = st.columns(2)
+            with col_a:
+                tgt = st.slider(f"เป้ากำไร (%)", 5, 100, int(m['target']), key=f"tgt_{item['symbol']}")
+            with col_b:
+                stp = st.slider(f"จุดตัดขาดทุน (%)", 3, 50, int(m['stop']), key=f"stp_{item['symbol']}")
             
             if entry_p > 0:
-                # บันทึกค่าลง Memory
                 st.session_state.portfolio[item['symbol']] = {'cost': entry_p, 'target': tgt, 'stop': stp}
-                
-                # คำนวณผลลัพธ์
                 diff = ((item['price_thb'] - entry_p) / entry_p) * 100
                 
-                # แสดง Alert ตามแผนที่ตั้งไว้ข้างบน
-                st.write("---")
+                # Alert UI
                 if diff >= tgt:
-                    st.success(f"🚀 **SELL ALERT:** กำไร {diff:+.2f}% (ถึงเป้า {tgt}% แล้ว!)")
+                    st.success(f"🚀 **ถึงเวลาขาย!** กำไรของคุณคือ {diff:+.2f}%")
                 elif diff <= -stp:
-                    st.error(f"🛑 **STOP LOSS:** ขาดทุน {diff:+.2f}% (ถึงจุดคัด {stp}% แล้ว!)")
+                    st.error(f"🛑 **ตัดขาดทุนด่วน!** ขาดทุน {diff:+.2f}%")
                 else:
-                    st.info(f"📊 **Status:** กำไรปัจจุบัน {diff:+.2f}% (รอถึงเป้า {tgt}%)")
+                    # ใช้ Progress Bar แสดงระยะทางสู่เป้าหมาย (ลูกเล่นใหม่)
+                    progress = min(max((diff / tgt), 0.0), 1.0)
+                    st.info(f"📊 กำไรปัจจุบัน: {diff:+.2f}% (เป้าหมาย {tgt}%)")
+                    st.progress(progress)
 
 # Auto Refresh
 time.sleep(REFRESH_SEC)
