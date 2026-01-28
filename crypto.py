@@ -38,16 +38,16 @@ def get_top_100_symbols():
         return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE']
 
 def sync_data_safe():
-    """ดึงราคาจาก Yahoo Finance แบบกลุ่ม (Batch) เพื่อไม่ให้โดนบล็อก"""
+    """ดึงราคาจาก Yahoo Finance แบบกลุ่ม พร้อมโชว์ Log สำเร็จ/ล้มเหลว"""
     symbols = get_top_100_symbols()
     try:
         usd_thb = yf.Ticker("THB=X").fast_info['last_price']
     except:
-        usd_thb = 35.0 # Fallback
+        usd_thb = 35.0 
     
     new_data = st.session_state.master_data.copy()
     success_count, fail_count = 0, 0
-    batch_size = 20 # แบ่งกลุ่มละ 20 เพื่อความปลอดภัย
+    batch_size = 20 
     
     with st.status("📡 AI Scanning Market (Batch Mode)...") as status:
         for i in range(0, len(symbols), batch_size):
@@ -55,7 +55,7 @@ def sync_data_safe():
             tickers = [f"{s}-USD" for s in batch]
             
             try:
-                # ดึงข้อมูล 1 เดือน รายชั่วโมง แบบเงียบๆ (progress=False)
+                # ดึงข้อมูลแบบเงียบๆ ไม่พ่น Progress Bar ลง Log
                 data_group = yf.download(tickers, period="1mo", interval="1h", group_by='ticker', progress=False, timeout=20)
                 
                 for s in batch:
@@ -70,16 +70,17 @@ def sync_data_safe():
                                 'rank': symbols.index(s) + 1
                             }
                             success_count += 1
-                            print(f"✅ [SUCCESS] {s}") # โชว์ใน Log หลังบ้าน
+                            print(f"✅ [SUCCESS] {s}") 
                         else:
                             fail_count += 1
-                            print(f"❌ [FAILED] {s}: No Price Data")
+                            print(f"❌ [FAILED] {s}: No Data")
                     except:
                         fail_count += 1
+                        print(f"❌ [FAILED] {s}: Error")
                         continue
-                time.sleep(1.2) # พักเบรกกันโดนแบน
-            except:
-                print(f"⚠️ [BATCH ERROR] Group {i//batch_size + 1} failed")
+                time.sleep(1.2) 
+            except Exception as e:
+                print(f"⚠️ [BATCH ERROR] Group {i//batch_size + 1}")
                 continue
         
         st.session_state.master_data = new_data
@@ -115,14 +116,13 @@ with st.sidebar:
 # ---------------------------------------------------------
 st.title("🛡️ Crypto Strategist Pro")
 
-# ถ้าเปิดมาครั้งแรกไม่มีข้อมูล ให้โหลดทันที
 if not st.session_state.master_data:
     sync_data_safe()
     st.rerun()
 
 # กรองเหรียญตามงบ
 display_list = [s for s, d in st.session_state.master_data.items() if budget == 0 or d['price'] <= budget]
-display_list = display_list[:100] if budget > 0 else display_list[:6] # ถ้าไม่กรองโชว์ 6 ตัวแรก
+display_list = display_list[:100] if budget > 0 else display_list[:6] 
 
 cols = st.columns(2)
 for idx, s in enumerate(display_list):
@@ -143,7 +143,6 @@ for idx, s in enumerate(display_list):
             
             if is_pinned:
                 m = st.session_state.portfolio[s]
-                # ช่องกรอกราคาทุนแบบ Enter to Update
                 new_cost = st.number_input(
                     f"ระบุราคาทุน {s} (กด Enter):",
                     value=float(m['cost']),
@@ -158,7 +157,9 @@ for idx, s in enumerate(display_list):
                 st.session_state.portfolio[s]['target'] = c1.slider("เป้า %", 5, 100, int(m['target']), key=f"t_{s}")
                 st.session_state.portfolio[s]['stop'] = c2.slider("คัด %", 3, 50, int(m['stop']), key=f"s_{s}")
             
-            # กราฟเส้นแบบ Simple
+            # กราฟ (อัปเดตเป็น Syntax ใหม่ปี 2026)
             fig = go.Figure(data=[go.Scatter(y=data['df']['Close'].tail(50).values, mode='lines', line=dict(color='#00ffcc', width=2))])
             fig.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-            st.plotly_chart(fig, use_container_width=True, key=f"g_{s}", config={'displayModeBar': False})
+            
+            # แก้ไขตรงนี้ให้รองรับ Streamlit เวอร์ชันใหม่
+            st.plotly_chart(fig, width='stretch', key=f"g_{s}", config={'displayModeBar': False})
