@@ -43,7 +43,6 @@ def add_indicators(df):
     
     # EMA
     df['EMA20'] = close.ewm(span=20, adjust=False).mean()
-    df['EMA50'] = close.ewm(span=50, adjust=False).mean()
     
     # MACD
     exp1 = close.ewm(span=12, adjust=False).mean()
@@ -66,15 +65,20 @@ def get_coin_data(symbol):
     return None, None
 
 # ------------------------
-# UI & SIDEBAR
+# UI & SIDEBAR (ระบบตั้งเป้ากำไร/ขาดทุน)
 # ------------------------
 with st.sidebar:
     st.title("🎯 Strategy Settings")
     
-    # ปรับให้เริ่มต้นเป็นค่าว่าง (None)
     budget = st.number_input("งบต่อ 1 เหรียญ (บาท):", min_value=0.0, value=None, placeholder="กรอกงบเพื่อเริ่มกรอง...")
     
-    st.subheader("Signal Filters")
+    st.divider()
+    st.subheader("💰 Profit & Risk Management")
+    target_pct = st.slider("เป้าหมายกำไร (%)", 5, 100, 15)
+    stop_loss_pct = st.slider("จุดตัดขาดทุน (%)", 3, 50, 7)
+    
+    st.divider()
+    st.subheader("🔍 Signal Filters")
     min_rsi = st.slider("RSI Oversold Level", 10, 40, 30)
     use_ema_filter = st.checkbox("ยืนยันเทรนด์ (Price > EMA20)", value=True)
     
@@ -97,12 +101,14 @@ with st.spinner("🔍 กำลังวิเคราะห์ข้อมู�
         if price_usd and df is not None:
             price_thb = price_usd * usd_thb
             
+            # ดึงค่า Indicators ล่าสุด
             last_close = float(df['Close'].iloc[-1])
             last_rsi = float(df['RSI'].iloc[-1])
             last_ema20 = float(df['EMA20'].iloc[-1])
             last_macd = float(df['MACD'].iloc[-1])
             last_signal = float(df['Signal'].iloc[-1])
             
+            # Logic สัญญาณซื้อ
             is_oversold = last_rsi <= min_rsi
             is_bullish_ema = last_close > last_ema20 if use_ema_filter else True
             is_macd_cross = last_macd > last_signal
@@ -115,43 +121,57 @@ with st.spinner("🔍 กำลังวิเคราะห์ข้อมู�
 
 # --- FILTERING LOGIC ---
 if budget is None or budget == 0:
-    # โหมดเริ่มต้น: แสดง Top 6 เหรียญแรกที่สแกนได้
     display_items = scanned_items[:6]
-    st.info("💡 โหมดแนะนำ: แสดง Top 6 เหรียญยอดนิยม (กรอกงบประมาณที่ Sidebar เพื่อเริ่มการกรอง)")
+    st.info("💡 แสดง Top 6 เหรียญแนะนำ (กรอกงบที่ Sidebar เพื่อกรองตามราคาจริง)")
 else:
-    # โหมดกรอง: แสดงเฉพาะเหรียญที่อยู่ในงบ
     display_items = [item for item in scanned_items if item['price_thb'] <= budget]
-    st.success(f"🔍 โหมดกรอง: แสดงเหรียญที่ราคาไม่เกิน {budget:,.2f} บาท")
+    st.success(f"🔍 กรองเหรียญที่ราคาต่ำกว่า {budget:,.2f} บาท")
 
 # --- DISPLAY ---
 if not display_items:
-    st.warning("⚠️ ไม่พบเหรียญที่ตรงตามเงื่อนไขงบประมาณของคุณ")
+    st.warning("⚠️ ไม่พบเหรียญที่ตรงตามเงื่อนไขงบประมาณ")
 else:
     cols = st.columns(3)
     for idx, item in enumerate(display_items):
         with cols[idx % 3]:
             with st.container(border=True):
                 st.subheader(f"🪙 {item['symbol']}")
-                st.metric("ราคา", f"{item['price_thb']:,.2f} ฿")
+                st.metric("ราคาปัจจุบัน", f"{item['price_thb']:,.2f} ฿")
                 
+                # Indicators Info
                 c1, c2 = st.columns(2)
                 c1.write(f"**RSI:** {item['rsi']:.1f}")
-                macd_val = "Bullish" if item['macd'] > item['signal'] else "Bearish"
-                c2.write(f"**MACD:** {macd_val}")
+                macd_status = "Bullish" if item['macd'] > item['signal'] else "Bearish"
+                c2.write(f"**MACD:** {macd_status}")
 
                 # Plotly Chart
                 fig = go.Figure()
                 hist_df = item['df'].tail(48)
                 fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['Close'], name='Price', line=dict(color='#00ffcc')))
                 fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['EMA20'], name='EMA20', line=dict(color='orange', width=1)))
-                fig.update_layout(height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, showlegend=False, 
-                                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fig.update_layout(height=140, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
+                # --- ระบบคำนวณเป้าหมายกำไร/ขาดทุน (นี่คือส่วนที่เพิ่มกลับมาครับ) ---
+                st.divider()
+                entry_price = st.number_input(f"ทุน {item['symbol']} (บาท):", key=f"cost_{item['symbol']}", value=0.0, step=100.0)
+                
+                if entry_price > 0:
+                    current_p = item['price_thb']
+                    diff_pct = ((current_p - entry_price) / entry_price) * 100
+                    
+                    if diff_pct >= target_pct:
+                        st.success(f"🚀 ถึงเป้ากำไร!: {diff_pct:+.2f}% (ควรพิจารณาขาย)")
+                    elif diff_pct <= -stop_loss_pct:
+                        st.error(f"🛑 หลุดจุดคัด!: {diff_pct:+.2f}% (ต้องตัดขาดทุน)")
+                    else:
+                        st.info(f"📊 ผลตอบแทนปัจจุบัน: {diff_pct:+.2f}%")
+                
+                # แสดงสถานะสัญญาณซื้อเบื้องต้น
                 if item['status'] == "BUY SIGNAL":
-                    st.success("🔥 สัญญาณน่าสนใจ")
+                    st.markdown("🎯 **Signal:** <span style='color:green'>BUY NOW</span>", unsafe_allow_html=True)
                 else:
-                    st.info("📊 รอจังหวะ...")
+                    st.markdown("🎯 **Signal:** <span style='color:gray'>WATCHING</span>", unsafe_allow_html=True)
 
 # Auto Refresh
 time.sleep(REFRESH_SEC)
