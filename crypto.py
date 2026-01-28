@@ -22,11 +22,14 @@ def get_exchange_rate():
 
 # 2. คำนวณ RSI
 def calculate_rsi(data, window=14):
+    if len(data) <= window:
+        return pd.Series([50.0] * len(data)) # ส่งค่ากลางกลับไปถ้าข้อมูลไม่พอ
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss.replace(0, 0.001)
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50.0) # เปลี่ยนค่าว่างเป็น 50.0
 
 # 3. ดึงข้อมูล Crypto (ดึงทีละตัวผ่าน yfinance เพื่อความเสถียรบน Cloud)
 def get_coin_data(symbol):
@@ -85,3 +88,4 @@ else:
 # Auto Refresh
 time.sleep(60)
 st.rerun()
+
