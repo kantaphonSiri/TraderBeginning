@@ -12,26 +12,28 @@ from datetime import datetime
 REFRESH_SEC = 60
 st.set_page_config(page_title="Budget-Bets Alpha Pro", layout="wide")
 
-# 1. ระบบตรวจสอบค่าเงินบาทแบบหลายชั้น (Multi-source Exchange Rate)
+# 1. ระบบตรวจสอบค่าเงินบาทแบบหลายชั้น
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
-    # Source A: yfinance
     try:
         ticker = yf.Ticker("THB=X")
         rate = ticker.fast_info['last_price']
-        if rate and 30 < rate < 40: return rate
+        if rate and 30 < rate < 45: return float(rate)
     except: pass
     
-    # Source B: ExchangeRate-API (Backup)
     try:
         res = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5).json()
-        return res['rates']['THB']
+        return float(res['rates']['THB'])
     except:
-        return 35.0 # Last resort
+        return 35.0
 
 # 2. คำนวณ Advanced Indicators
 def add_indicators(df):
-    close = df['Close']
+    # ตรวจสอบว่าข้อมูลเป็นแบบ Multi-index หรือไม่ (แก้ปัญหา yfinance รุ่นใหม่)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    close = df['Close'].astype(float)
     
     # RSI
     delta = close.diff()
@@ -40,7 +42,7 @@ def add_indicators(df):
     rs = gain / loss.replace(0, 0.001)
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # EMA (20 และ 50) - เพื่อดู Trend
+    # EMA
     df['EMA20'] = close.ewm(span=20, adjust=False).mean()
     df['EMA50'] = close.ewm(span=50, adjust=False).mean()
     
@@ -59,7 +61,9 @@ def get_coin_data(symbol):
         df = yf.download(ticker_sym, period="1mo", interval="1h", progress=False)
         if not df.empty:
             df = add_indicators(df)
-            return float(df['Close'].iloc[-1]), df
+            # ดึงราคาปัจจุบันเป็น float แน่นอน
+            last_price = float(df['Close'].iloc[-1])
+            return last_price, df
     except: pass
     return None, None
 
@@ -72,7 +76,7 @@ with st.sidebar:
     
     st.subheader("Signal Filters")
     min_rsi = st.slider("RSI Oversold Level", 10, 40, 30)
-    use_ema_filter = st.checkbox("ยืนยันด้วย EMA (ราคา > EMA20)", value=True)
+    use_ema_filter = st.checkbox("ยืนยันเทรนด์ (Price > EMA20)", value=True)
     
     if st.button("🔄 Force Re-Scan", use_container_width=True):
         st.cache_data.clear()
@@ -82,7 +86,7 @@ usd_thb = get_exchange_rate()
 st.title("👛 Budget-Bets Alpha")
 st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | **Refreshed:** {datetime.now().strftime('%H:%M:%S')}")
 
-# รายชื่อเหรียญยอดนิยม
+# รายชื่อเหรียญ
 symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOT', 'AVAX', 'LINK', 'NEAR', 'SUI', 'OP', 'ARB']
 
 # --- PROCESSING ---
@@ -90,51 +94,56 @@ display_items = []
 with st.spinner("🔍 วิเคราะห์ตลาดด้วย EMA + MACD + RSI..."):
     for s in symbols:
         price_usd, df = get_coin_data(s)
-        if price_usd:
+        if price_usd and df is not None:
             price_thb = price_usd * usd_thb
             if budget == 0 or price_thb <= budget:
-                last_row = df.iloc[-1]
+                # ดึงค่าสุดท้ายออกมาเป็น Scalar (ตัวเลขเดี่ยว) เพื่อป้องกัน ValueError
+                last_close = float(df['Close'].iloc[-1])
+                last_rsi = float(df['RSI'].iloc[-1])
+                last_ema20 = float(df['EMA20'].iloc[-1])
+                last_macd = float(df['MACD'].iloc[-1])
+                last_signal = float(df['Signal'].iloc[-1])
                 
-                # Logic การคัดกรองสัญญาณ
-                is_oversold = last_row['RSI'] <= min_rsi
-                is_bullish_ema = last_row['Close'] > last_row['EMA20'] if use_ema_filter else True
-                is_macd_cross = last_row['MACD'] > last_row['Signal']
+                # Logic การคัดกรองสัญญาณ (เปรียบเทียบตัวเลขต่อตัวเลข)
+                is_oversold = last_rsi <= min_rsi
+                is_bullish_ema = last_close > last_ema20 if use_ema_filter else True
+                is_macd_cross = last_macd > last_signal
 
                 display_items.append({
                     'symbol': s, 'price_thb': price_thb, 'df': df,
-                    'rsi': last_row['RSI'], 'ema20': last_row['EMA20'],
-                    'macd': last_row['MACD'], 'signal': last_row['Signal'],
+                    'rsi': last_rsi, 'macd': last_macd, 'signal': last_signal,
                     'status': "BUY SIGNAL" if (is_oversold or (is_bullish_ema and is_macd_cross)) else "WATCHING"
                 })
 
 # --- DISPLAY ---
-cols = st.columns(3)
-for idx, item in enumerate(display_items):
-    with cols[idx % 3]:
-        # เปลี่ยนสีกรอบตามสัญญาณ
-        border_color = "green" if item['status'] == "BUY SIGNAL" else "none"
-        with st.container(border=True):
-            st.subheader(f"🪙 {item['symbol']}")
-            st.metric("ราคา", f"{item['price_thb']:,.2f} ฿")
-            
-            # Indicators Grid
-            c1, c2 = st.columns(2)
-            c1.write(f"**RSI:** {item['rsi']:.1f}")
-            macd_val = "Bullish" if item['macd'] > item['signal'] else "Bearish"
-            c2.write(f"**MACD:** {macd_val}")
+if not display_items:
+    st.warning("⚠️ ไม่พบเหรียญที่ตรงตามเงื่อนไข ลองเพิ่มงบประมาณหรือปรับ Filter")
+else:
+    cols = st.columns(3)
+    for idx, item in enumerate(display_items):
+        with cols[idx % 3]:
+            with st.container(border=True):
+                st.subheader(f"🪙 {item['symbol']}")
+                st.metric("ราคา", f"{item['price_thb']:,.2f} ฿")
+                
+                c1, c2 = st.columns(2)
+                c1.write(f"**RSI:** {item['rsi']:.1f}")
+                macd_val = "Bullish" if item['macd'] > item['signal'] else "Bearish"
+                c2.write(f"**MACD:** {macd_val}")
 
-            # Plotly Chart (ราคา + EMA)
-            fig = go.Figure()
-            hist_df = item['df'].tail(48)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['Close'], name='Price', line=dict(color='#00ffcc')))
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['EMA20'], name='EMA20', line=dict(color='orange', width=1)))
-            fig.update_layout(height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                # Plotly Chart
+                fig = go.Figure()
+                hist_df = item['df'].tail(48)
+                fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['Close'], name='Price', line=dict(color='#00ffcc')))
+                fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['EMA20'], name='EMA20', line=dict(color='orange', width=1)))
+                fig.update_layout(height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, showlegend=False, 
+                                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-            if item['status'] == "BUY SIGNAL":
-                st.success("🔥 สัญญาณน่าสนใจ (EMA + MACD)")
-            else:
-                st.info("📊 รอจังหวะ...")
+                if item['status'] == "BUY SIGNAL":
+                    st.success("🔥 สัญญาณน่าสนใจ")
+                else:
+                    st.info("📊 รอจังหวะ...")
 
 # Auto Refresh
 time.sleep(REFRESH_SEC)
