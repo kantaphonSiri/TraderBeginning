@@ -10,13 +10,14 @@ from datetime import datetime
 # 0. CONFIG & SESSION STATE
 # ------------------------
 REFRESH_SEC = 60
-st.set_page_config(page_title="Budget-Bets Portfolio Pro", layout="wide")
+st.set_page_config(page_title="Budget-Bets Personal Strategy", layout="wide")
 
-# สร้างตัวจำข้อมูล (Memory) สำหรับพอร์ต
+# ระบบจำพอร์ตและแผนการเทรดแยกเหรียญ
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {} # เก็บในรูปแบบ {'BTC': 2100000, 'SOL': 3500}
+    st.session_state.portfolio = {} 
+    # โครงสร้าง: {'BTC': {'cost': 2100000, 'target': 15, 'stop': 7}, ...}
 
-# 1. ระบบดึงข้อมูลพื้นฐาน (Top 30 + Exchange Rate)
+# 1. ระบบดึงข้อมูลพื้นฐาน
 @st.cache_data(ttl=3600)
 def get_top_symbols(limit=30):
     try:
@@ -25,7 +26,7 @@ def get_top_symbols(limit=30):
         exclude = ['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'PYUSD']
         return [coin['symbol'].upper() for coin in data if coin['symbol'].upper() not in exclude]
     except:
-        return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'LINK', 'DOT']
+        return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA']
 
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
@@ -35,7 +36,6 @@ def get_exchange_rate():
         return float(rate) if 30 < rate < 45 else 35.0
     except: return 35.0
 
-# 2. Indicators & AI Logic
 def add_indicators(df):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     close = df['Close'].astype(float)
@@ -46,46 +46,34 @@ def add_indicators(df):
     df['EMA20'] = close.ewm(span=20, adjust=False).mean()
     return df
 
-def analyze_logic(row):
-    score = 0
-    if row['RSI'] <= 35: score += 4
-    if row['Close'] > row['EMA20']: score += 3
-    if score >= 7: return "🔥 น่าซื้อ", "success"
-    if score >= 4: return "⚖️ รอจังหวะ", "info"
-    return "⚠️ เลี่ยง", "warning"
-
 # ------------------------
-# UI SIDEBAR (Portfolio Management)
+# UI SIDEBAR (Dashboard Summary)
 # ------------------------
 with st.sidebar:
-    st.title("💼 My Portfolio")
-    
-    # แสดงเหรียญที่ซื้อแล้วใน Sidebar
+    st.title("💼 Active Portfolio")
     if not st.session_state.portfolio:
-        st.write("ยังไม่มีเหรียญในพอร์ต")
+        st.write("ยังไม่มีเหรียญที่ติดตาม")
     else:
-        for sym, cost in list(st.session_state.portfolio.items()):
-            col_s1, col_s2 = st.columns([3, 1])
-            col_s1.write(f"**{sym}** (ทุน: {cost:,.0f})")
-            if col_s2.button("❌", key=f"del_{sym}"):
-                del st.session_state.portfolio[sym]
-                st.rerun()
+        for sym, data in list(st.session_state.portfolio.items()):
+            with st.expander(f"📌 {sym}"):
+                st.write(f"ทุน: {data['cost']:,.0f} ฿")
+                st.write(f"เป้า: +{data['target']}% | คัด: -{data['stop']}%")
+                if st.button(f"ลบ {sym}", key=f"del_{sym}"):
+                    del st.session_state.portfolio[sym]
+                    st.rerun()
     
     st.divider()
-    st.subheader("⚙️ Settings")
-    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, value=None)
-    target_pct = st.slider("เป้าหมายกำไร (%)", 5, 100, 15)
-    stop_loss_pct = st.slider("จุดตัดขาดทุน (%)", 3, 50, 7)
+    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, value=None, placeholder="กรองราคา...")
 
 # --- MAIN APP ---
 usd_thb = get_exchange_rate()
-st.title("👛 Budget-Bets Alpha Pro")
+st.title("👛 Personal Strategy Scanner")
 st.write(f"💵 **Rate:** {usd_thb:.2f} THB/USD | {datetime.now().strftime('%H:%M:%S')}")
 
 top_symbols = get_top_symbols(30)
 scanned_items = []
 
-with st.spinner("🤖 AI กำลังกวาดสแกนตลาด..."):
+with st.spinner("🤖 ระบบกำลังวิเคราะห์ข้อมูล..."):
     for s in top_symbols:
         try:
             df = yf.download(f"{s}-USD", period="1mo", interval="1h", progress=False)
@@ -93,8 +81,7 @@ with st.spinner("🤖 AI กำลังกวาดสแกนตลาด..."
                 df = add_indicators(df)
                 price_thb = float(df['Close'].iloc[-1]) * usd_thb
                 if budget is None or budget == 0 or price_thb <= budget:
-                    advice, color = analyze_logic(df.iloc[-1])
-                    scanned_items.append({'symbol': s, 'price_thb': price_thb, 'df': df, 'advice': advice, 'color': color})
+                    scanned_items.append({'symbol': s, 'price_thb': price_thb, 'df': df})
         except: continue
 
 # --- DISPLAY ---
@@ -104,40 +91,44 @@ cols = st.columns(2)
 for idx, item in enumerate(display_items):
     with cols[idx % 2]:
         with st.container(border=True):
-            # Header
-            c1, c2 = st.columns([1, 1])
-            c1.subheader(f"🪙 {item['symbol']}")
-            c1.metric("ราคา", f"{item['price_thb']:,.2f} ฿")
+            st.subheader(f"🪙 {item['symbol']}")
+            st.metric("ราคาปัจจุบัน", f"{item['price_thb']:,.2f} ฿")
             
-            # AI Advice (ย้ายมาข้างบนเพื่อเป็นด่านหน้า)
-            if item['color'] == "success": c2.success(item['advice'])
-            elif item['color'] == "info": c2.info(item['advice'])
-            else: c2.warning(item['advice'])
-
             # Chart
             fig = go.Figure(data=[go.Scatter(y=item['df']['Close'].tail(48), line=dict(color='#00ffcc'))])
             fig.update_layout(height=120, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # --- ระบบกรอกราคาและ Alert ---
-            # ดึงค่าจาก session_state มาใส่ในช่อง Input ถ้ามี
-            saved_cost = st.session_state.portfolio.get(item['symbol'], 0.0)
-            entry_price = st.number_input(f"ระบุทุน {item['symbol']} (บาท):", value=float(saved_cost), key=f"in_{item['symbol']}")
+            # --- ส่วนการตั้งค่าแผนการเทรดรายเหรียญ ---
+            st.divider()
+            st.write("📝 **วางแผนการเทรด:**")
             
-            if entry_price > 0:
-                # บันทึกลง Sidebar ทันที
-                st.session_state.portfolio[item['symbol']] = entry_price
+            # ดึงค่าเดิมจาก Memory
+            m = st.session_state.portfolio.get(item['symbol'], {'cost': 0.0, 'target': 15, 'stop': 7})
+            
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                entry_p = st.number_input(f"ทุน (บาท)", value=float(m['cost']), key=f"cost_{item['symbol']}")
+            with c2:
+                tgt = st.number_input(f"เป้ากำไร (%)", value=int(m['target']), key=f"tgt_{item['symbol']}")
+            with c3:
+                stp = st.number_input(f"จุดคัด (%)", value=int(m['stop']), key=f"stp_{item['symbol']}")
+            
+            if entry_p > 0:
+                # บันทึกค่าลง Memory
+                st.session_state.portfolio[item['symbol']] = {'cost': entry_p, 'target': tgt, 'stop': stp}
                 
-                # คำนวณกำไร/ขาดทุน
-                diff = ((item['price_thb'] - entry_price) / entry_price) * 100
+                # คำนวณผลลัพธ์
+                diff = ((item['price_thb'] - entry_p) / entry_p) * 100
                 
-                # แสดงผลการวิเคราะห์ใต้ช่องกรอก
-                if diff >= target_pct:
-                    st.success(f"🚀 **SELL ALERT:** กำไรพุ่ง {diff:+.2f}% (ถึงเป้า {target_pct}%)")
-                elif diff <= -stop_loss_pct:
-                    st.error(f"🛑 **STOP LOSS:** ขาดทุน {diff:+.2f}% (ถึงจุดตัด {stop_loss_pct}%)")
+                # แสดง Alert ตามแผนที่ตั้งไว้ข้างบน
+                st.write("---")
+                if diff >= tgt:
+                    st.success(f"🚀 **SELL ALERT:** กำไร {diff:+.2f}% (ถึงเป้า {tgt}% แล้ว!)")
+                elif diff <= -stp:
+                    st.error(f"🛑 **STOP LOSS:** ขาดทุน {diff:+.2f}% (ถึงจุดคัด {stp}% แล้ว!)")
                 else:
-                    st.info(f"📊 **Status:** กำไร {diff:+.2f}% (รันเทรนด์ต่อ)")
+                    st.info(f"📊 **Status:** กำไรปัจจุบัน {diff:+.2f}% (รอถึงเป้า {tgt}%)")
 
 # Auto Refresh
 time.sleep(REFRESH_SEC)
