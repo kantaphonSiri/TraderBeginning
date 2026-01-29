@@ -4,134 +4,111 @@ import requests
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# 1. SETUP
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?output=csv"
+# 1. SETUP & CONFIG
+# เปลี่ยนเป็น URL ของแท็บพอร์ต (CSV)
+SHEET_PORTFOLIO_URL = "https://docs.google.com/spreadsheets/d/e/YOUR_ID/pub?gid=0&output=csv" 
 EXCHANGE_RATE = 35.5
-st.set_page_config(page_title="Budget-Bet Precision Pro", layout="wide")
+st.set_page_config(page_title="Crypto Login & Pin", layout="wide")
 
-# CSS: Custom Styling
-st.markdown("""
-    <style>
-    .stMetric { background: #161a1e; padding: 15px; border-radius: 12px; border: 1px solid #2b2f36; }
-    .status-tag { padding: 4px 12px; border-radius: 6px; font-weight: bold; font-size: 14px; }
-    </style>
-""", unsafe_allow_html=True)
-
-# 2. DATA ENGINE (ปรับปรุงให้ปลอดภัย 100%)
+# 2. DATA ENGINE
 def get_data():
-    providers = [
-        {"url": "https://api.binance.com/api/v3/ticker/24hr", "type": "binance"},
-        {"url": "https://api.gateio.ws/api/v4/spot/tickers", "type": "gateio"}
-    ]
-    
-    for p in providers:
-        try:
-            res = requests.get(p["url"], timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                df = pd.DataFrame(data)
-                
-                if df.empty: continue
-
-                if p["type"] == "binance":
-                    df['price'] = pd.to_numeric(df['lastPrice'], errors='coerce')
-                    df['change'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
-                    df['volume'] = pd.to_numeric(df['quoteVolume'], errors='coerce')
-                    df['open_p'] = pd.to_numeric(df['openPrice'], errors='coerce')
-                else:
-                    df['symbol'] = df['currency_pair'].str.replace('_', '')
-                    df['price'] = pd.to_numeric(df['last'], errors='coerce')
-                    df['change'] = pd.to_numeric(df['change_percentage'], errors='coerce')
-                    df['volume'] = pd.to_numeric(df['quote_volume'], errors='coerce')
-                    df['open_p'] = df['price'] / (1 + (df['change'] / 100))
-                
-                return df[['symbol', 'price', 'change', 'volume', 'open_p']].dropna(), p["type"]
-        except Exception as e:
-            continue
-            
-    # หากล่มทุกทาง ให้ส่ง DataFrame เปล่ากลับไปแทน None เพื่อกัน AttributeError
-    return pd.DataFrame(columns=['symbol', 'price', 'change', 'volume', 'open_p']), "Disconnected"
-
-# 3. REFRESH & STATE
-st_autorefresh(interval=30000, key="v12_refresh")
-df_raw, source = get_data() # รับค่ามา 2 ตัวเสมอ
-
-# 4. SIDEBAR - Multi-User Logic
-with st.sidebar:
-    st.title("👤 User Access")
-    # 3 คนใช้งาน แยกชื่อชัดเจน
-    current_user = st.selectbox("เลือกผู้ใช้งาน:", ["Admin (ผู้สร้าง)", "User_A", "User_B"])
-    
-    st.divider()
-    st.subheader(f"💵 งบของ {current_user}")
-    budget = st.number_input("งบซื้อต่อหน่วย (บาท):", min_value=0.0, value=0.0, step=1000.0)
-    st.caption(f"Connected: {source.upper()}")
-    
-    st.divider()
-    st.subheader("📋 My Portfolio")
     try:
-        df_port = pd.read_csv(SHEET_URL)
-        if 'owner' in df_port.columns:
-            user_data = df_port[df_port['owner'] == current_user]
-            if not user_data.empty:
-                for _, row in user_data.iterrows():
-                    st.write(f"📌 {str(row['symbol']).upper()}")
-            else:
-                st.caption("ไม่มีเหรียญในพอร์ต")
-        else:
-            st.warning("Sheets ต้องมีคอลัมน์ 'owner'")
-    except:
-        st.caption("รอเชื่อมต่อ Sheets...")
+        res = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=5)
+        if res.status_code == 200:
+            df = pd.DataFrame(res.json())
+            df['price'] = pd.to_numeric(df['lastPrice'], errors='coerce')
+            df['change'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
+            df['volume'] = pd.to_numeric(df['quoteVolume'], errors='coerce')
+            df['open_p'] = pd.to_numeric(df['openPrice'], errors='coerce')
+            return df[['symbol', 'price', 'change', 'volume', 'open_p']].dropna(), "Binance"
+    except: pass
+    return pd.DataFrame(), "Disconnected"
 
-# 5. MAIN UI - Yahoo Precision Waterfall
-st.title(f"🪙 Smart Terminal: {current_user}")
+# 3. LOGIN SESSION STATE
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user = ""
 
-# แก้ไขจุดล่ม: เช็คว่า df_raw ไม่เป็น None และไม่ว่าง
-if df_raw is not None and not df_raw.empty:
-    # --- STEP 1: Global Scan 200 ตัวแรก ---
+# 4. LOGIN UI
+if not st.session_state.logged_in:
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.title("🔐 Crypto Terminal Login")
+        with st.form("login_form"):
+            user_input = st.text_input("Username")
+            pin_input = st.text_input("PIN (4 หลัก)", type="password")
+            submit = st.form_submit_button("เข้าสู่ระบบ")
+            
+            if submit:
+                # ในที่นี้ตัวอย่างเป็นการเช็ค Hardcode หรือคุณจะดึงจาก Sheets มาเทียบก็ได้
+                # สมมติ Admin PIN คือ 1234
+                if (user_input == "Admin" and pin_input == "1234") or \
+                   (user_input == "User_A" and pin_input == "0000"):
+                    st.session_state.logged_in = True
+                    st.session_state.user = user_input
+                    st.rerun()
+                else:
+                    st.error("Username หรือ PIN ไม่ถูกต้อง")
+    st.stop()
+
+# 5. MAIN APP (After Login)
+st_autorefresh(interval=30000, key="v13_refresh")
+df_raw, source = get_data()
+
+# SIDEBAR: ข้อมูลผู้ใช้และเหรียญที่ Pin ไว้
+with st.sidebar:
+    st.title(f"👤 {st.session_state.user}")
+    if st.button("Log out"):
+        st.session_state.logged_in = False
+        st.rerun()
+    
+    st.divider()
+    st.subheader("📌 Pinned Coins")
+    # ดึงรายการเหรียญที่ Pin จาก Sheets (จำลองการดึง)
+    try:
+        # ในแอปจริง คุณจะใช้ระบบส่งข้อมูลกลับไปที่ Sheets ผ่าน Form/API
+        # ตอนนี้แสดงเป็นรายการที่ User สนใจ
+        st.info("เหรียญที่คุณบันทึกไว้จะแสดงที่นี่")
+        # ตัวอย่าง: st.write("✅ BTC")
+    except: pass
+
+# 6. YAHOO PRECISION LOGIC
+st.title(f"🪙 Smart Selection for {st.session_state.user}")
+
+if not df_raw.empty:
     df_global = df_raw.copy()
-    df_global = df_global[
-        (df_global['symbol'].str.endswith('USDT')) & 
-        (~df_global['symbol'].str.contains('UP|DOWN|USDC|DAI|FDUSD|TUSD'))
-    ]
+    df_global = df_global[(df_global['symbol'].str.endswith('USDT')) & (~df_global['symbol'].str.contains('UP|DOWN|USDC'))]
     df_global = df_global.sort_values(by='volume', ascending=False).head(200)
     
-    # --- STEP 2: Pre-Stamp (🔵/🪙) ---
+    # Pre-Stamp
     df_global['rank'] = range(1, len(df_global) + 1)
     df_global['stamp'] = df_global['rank'].apply(lambda x: "🔵" if x <= 30 else "🪙")
-    
-    # --- STEP 3: กรองตามงบ ---
     df_global['price_thb'] = df_global['price'] * EXCHANGE_RATE
-    if budget > 0:
-        affordable_df = df_global[df_global['price_thb'] <= budget].copy()
-    else:
-        affordable_df = df_global.copy()
-
-    # --- STEP 4: แสดงผล 6 ตัวที่ดังที่สุดในกลุ่มนั้น ---
-    recommend = affordable_df.head(6)
-
-    st.subheader(f"🚀 Top Assets Under {budget:,.0f} THB" if budget > 0 else "🏆 Market Leaders")
-
-    if not recommend.empty:
-        col1, col2 = st.columns(2)
-        for idx, row in enumerate(recommend.to_dict('records')):
-            target_col = col1 if idx % 2 == 0 else col2
-            sym = row['symbol'].replace('USDT', '')
-            
-            with target_col:
-                with st.container(border=True):
-                    chg = row['change']
-                    if chg < -4: status, color = "🟢 น่าซื้อ", "#00ffcc"
-                    elif chg > 10: status, color = "🔴 ระวังดอย", "#ff4b4b"
-                    else: status, color = "🟡 ทยอยเก็บ", "#f1c40f"
-
-                    st.markdown(f"### {row['stamp']} {sym} <span class='status-tag' style='background:{color}; color:black;'>{status}</span>", unsafe_allow_html=True)
-                    st.metric("ราคาตลาด", f"{row['price_thb']:,.2f} ฿", f"{chg:+.2f}%")
-                    
-                    fig = go.Figure(go.Scatter(y=[row['open_p'], row['price']], line=dict(color=color, width=4)))
-                    fig.update_layout(height=50, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig, use_container_width=True, key=f"ch_{sym}_{idx}", config={'displayModeBar': False})
-    else:
-        st.warning("❌ ไม่พบเหรียญที่ดังพอในงบนี้")
+    
+    # แสดงเหรียญแนะนำ
+    recommend = df_global.head(6)
+    
+    col1, col2 = st.columns(2)
+    for idx, row in enumerate(recommend.to_dict('records')):
+        target_col = col1 if idx % 2 == 0 else col2
+        sym = row['symbol'].replace('USDT', '')
+        
+        with target_col:
+            with st.container(border=True):
+                # ส่วนหัว: ชื่อเหรียญ + ปุ่ม Pin (จำลอง)
+                head1, head2 = st.columns([3, 1])
+                with head1:
+                    st.markdown(f"### {row['stamp']} {sym}")
+                with head2:
+                    if st.button("📌 Pin", key=f"pin_{sym}"):
+                        st.toast(f"บันทึก {sym} ลงในพอร์ตแล้ว!")
+                
+                chg = row['change']
+                st.metric("ราคา", f"{row['price_thb']:,.2f} ฿", f"{chg:+.2f}%")
+                
+                # Graph
+                fig = go.Figure(go.Scatter(y=[row['open_p'], row['price']], line=dict(width=4)))
+                fig.update_layout(height=60, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False)
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{sym}")
 else:
-    st.error("📡 ไม่สามารถเชื่อมต่อ API ได้ในขณะนี้ ระบบจะลองใหม่ใน 30 วินาที")
+    st.error("📡 ไม่สามารถดึงข้อมูลตลาดได้")
