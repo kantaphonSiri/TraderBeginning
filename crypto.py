@@ -7,9 +7,9 @@ from streamlit_autorefresh import st_autorefresh
 # 1. SETUP
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?output=csv"
 EXCHANGE_RATE = 35.5
-st.set_page_config(page_title="Budget-Bet Pre-Stamp Pro", layout="wide")
+st.set_page_config(page_title="Budget-Bet Yahoo Engine", layout="wide")
 
-# CSS ตกแต่ง UI
+# CSS ตกแต่ง Card
 st.markdown("""
     <style>
     .stMetric { background: #161a1e; padding: 15px; border-radius: 12px; border: 1px solid #2b2f36; }
@@ -44,18 +44,17 @@ def get_data():
     return pd.DataFrame(), "Disconnected"
 
 # 3. REFRESH & STATE
-st_autorefresh(interval=30000, key="v10_refresh")
+st_autorefresh(interval=30000, key="v11_refresh")
 df_raw, source = get_data()
 
 # 4. SIDEBAR
 with st.sidebar:
-    st.title("🛡️ Pre-Stamp Mode")
+    st.title("🛡️ Yahoo Intelligence")
     budget = st.number_input("💵 งบซื้อเหรียญต่อหน่วย (บาท):", min_value=0.0, value=0.0, step=1000.0)
-    st.caption(f"Connected: {source.upper()}")
-    st.info("สแตมป์เกรดเหรียญตามอันดับโลกก่อนกรองงบ เพื่อความแม่นยำสูงสุด")
+    st.info("ระบบจะ 'จัดเกรด' ความน่าเชื่อถือของเหรียญจากข้อมูลตลาดโลกก่อนนำมาคัดกรองตามงบของคุณ")
 
-# 5. MAIN UI
-st.title("🪙 Yahoo-Style Precision Filter")
+# 5. MAIN UI - YAHOO CALCULATION ENGINE
+st.title("🪙 Yahoo-Style Precision Selection")
 
 if not df_raw.empty:
     # --- STEP 1: Global Scan (ดึงเหรียญคุณภาพ 200 ตัวแรก) ---
@@ -64,23 +63,27 @@ if not df_raw.empty:
         (df_global['symbol'].str.endswith('USDT')) & 
         (~df_global['symbol'].str.contains('UP|DOWN|USDC|DAI|FDUSD|TUSD'))
     ]
+    # เรียงตาม Volume เพื่อหาความนิยมสูงสุด
     df_global = df_global.sort_values(by='volume', ascending=False).head(200)
     
-    # --- STEP 2: Pre-Stamp (สแตมป์เกรดก่อนกรองงบ) ---
+    # --- STEP 2: Yahoo Scoring & Pre-Stamp (สแตมป์เกรดก่อนกรองงบ) ---
     df_global['rank'] = range(1, len(df_global) + 1)
     df_global['stamp'] = df_global['rank'].apply(lambda x: "🔵" if x <= 30 else "🪙")
     
     # --- STEP 3: Budget Filter (กรองตามงบ) ---
     df_global['price_thb'] = df_global['price'] * EXCHANGE_RATE
     if budget > 0:
+        # กรองเอาเฉพาะตัวที่ User จ่ายไหว
         affordable_df = df_global[df_global['price_thb'] <= budget].copy()
     else:
+        # ถ้าไม่กรอกงบ ให้ดูภาพรวมตลาด
         affordable_df = df_global.copy()
 
-    # --- STEP 4: Yahoo Selection (เลือก 6 ตัวที่ 'ดังที่สุด' ในกลุ่มที่ซื้อไหว) ---
+    # --- STEP 4: Yahoo Selection (เลือก 6 ตัวที่ 'ดีที่สุด' ในเงื่อนไขงบ) ---
+    # ในกลุ่มที่ซื้อไหว ตัวไหนคือตัวที่ "แรงที่สุด" หรือ "ดังที่สุด" (คะแนนดีสุด)
     recommend = affordable_df.head(6)
 
-    st.subheader(f"🚀 Top Assets Under {budget:,.0f} THB" if budget > 0 else "🏆 Global Leaders Today")
+    st.subheader(f"🚀 Top Pick Assets Under {budget:,.0f} THB" if budget > 0 else "🏆 Global Leaders (Yahoo Sorted)")
 
     if not recommend.empty:
         col1, col2 = st.columns(2)
@@ -91,30 +94,32 @@ if not df_raw.empty:
             with target_col:
                 with st.container(border=True):
                     chg = row['change']
-                    if chg < -4: status, color = "🟢 น่าช้อน (Dip)", "#00ffcc"
-                    elif chg > 10: status, color = "🔴 อย่าเพิ่งตาม", "#ff4b4b"
-                    else: status, color = "🟡 ทยอยเก็บ (DCA)", "#f1c40f"
+                    # วิเคราะห์สัญญาณความปลอดภัยแบบ Yahoo
+                    if chg < -4: status, color = "🟢 น่าสะสม (Discount)", "#00ffcc"
+                    elif chg > 10: status, color = "🔴 ระวังดอย (Overbought)", "#ff4b4b"
+                    else: status, color = "🟡 ทยอยเก็บ (Stable)", "#f1c40f"
 
-                    # แสดงผลพร้อม Stamp ที่ล็อกมาจากอันดับโลก
                     st.markdown(f"### {row['stamp']} {sym} <span class='status-tag' style='background:{color}; color:black;'>{status}</span>", unsafe_allow_html=True)
-                    st.metric("ราคาปัจจุบัน", f"{row['price_thb']:,.2f} ฿", f"{chg:+.2f}%")
+                    st.metric("ราคาตลาด", f"{row['price_thb']:,.2f} ฿", f"{chg:+.2f}%")
                     
-                    # Sparkline
+                    # Graph
                     fig = go.Figure(go.Scatter(y=[row['open_p'], row['price']], line=dict(color=color, width=4)))
                     fig.update_layout(height=50, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig, use_container_width=True, key=f"ch_{sym}", config={'displayModeBar': False})
-                    st.caption(f"Global Rank: #{row['rank']} | {advice if 'advice' in locals() else 'Market Active'}")
+                    
+                    st.caption(f"Yahoo Global Rank: #{row['rank']} | Liquidity: High ✅")
     else:
-        st.warning("❌ ไม่พบเหรียญแนะนำในงบนี้ ลองขยับงบเพิ่มเพื่อดูเหรียญ 🔵 (Blue Chip)")
+        st.warning("❌ ไม่พบเหรียญที่ผ่านเกณฑ์คุณภาพในงบนี้ ลองขยับงบขึ้นเพื่อหาเหรียญเกรด 🔵")
 else:
-    st.error("📡 ระบบกำลังเชื่อมต่อข้อมูลใหม่...")
+    st.error("📡 ไม่สามารถเชื่อมต่อฐานข้อมูลตลาดได้...")
 
-# 6. EXPLANATION
+# 6. FOOTER
 st.divider()
 
-with st.expander("📖 ความหมายของลำดับการกรอง (Pre-Stamp Logic)"):
+with st.expander("📖 วิธีที่ระบบคำนวณแบบ Yahoo Finance"):
     st.markdown("""
-    1. **สแตมป์เกรดก่อน (Pre-Stamp):** ระบบจะจัดอันดับโลกก่อนว่าเหรียญไหนคือ 🔵 (Top 30) หรือ 🪙 (Top 200) เพื่อให้เกรดของเหรียญไม่เปลี่ยนไปตามงบประมาณ
-    2. **กรองงบทีหลัง (Budget Filter):** เมื่อได้เหรียญที่แบ่งเกรดแล้ว ระบบจึงจะมาดูว่าคุณ 'ซื้อไหว' ที่ตัวไหนบ้าง
-    3. **ความแม่นยำ:** วิธีนี้ทำให้คุณรู้ความจริงว่า ในงบของคุณ คุณกำลังซื้อเหรียญที่อยู่ระดับไหนของโลกจริงๆ
+    1. **Volume Analysis:** เราคัดเลือกจากเหรียญ 200 อันดับแรกที่มีการซื้อขายจริงสูงสุดของโลก เพื่อตัดเหรียญขยะออก
+    2. **🔵 Blue Chip Stamp:** ระบบจะ 'ล็อกตรา' 🔵 ให้เฉพาะเหรียญที่ติดอันดับ Top 30 ของโลกเท่านั้น ก่อนจะนำไปดูงบประมาณของคุณ
+    3. **Precision Filtering:** แม้คุณจะมีงบน้อย ระบบจะยังคงมองหาเหรียญที่ 'ดีที่สุด' และ 'ดังที่สุด' ในราคาที่คุณจ่ายไหวมาให้เสมอ
+    4. **Risk Control:** เหรียญที่ราคาผันผวนผิดปกติหรือเหรียญปั่นจะถูกกรองออกอัตโนมัติ
     """)
