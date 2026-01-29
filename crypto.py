@@ -6,7 +6,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # 1. SETUP
 # สำคัญ: เปลี่ยนเป็น URL CSV ของคุณ
-SHEET_USERS_URL = "https://docs.google.com/spreadsheets/d/e/YOUR_ID/pub?gid=0&output=csv"
+SHEET_USERS_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?output=csv"
 EXCHANGE_RATE = 35.5
 st.set_page_config(page_title="Crypto Yahoo Precision", layout="wide")
 
@@ -131,3 +131,4 @@ else:
     st.error("📡 ไม่สามารถเชื่อมต่อ API ได้ในขณะนี้...")
 
 st.divider()
+
