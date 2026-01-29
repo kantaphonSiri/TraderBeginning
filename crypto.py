@@ -5,119 +5,116 @@ import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
 # ---------------------------------------------------------
-# 1. CONFIG & CONNECTION
+# 1. CONFIG & ADAPTIVE LOGIC
 # ---------------------------------------------------------
-# นำ Link CSV จาก Google Sheets (Publish to Web) มาวางที่นี่
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?output=csv"
 
 st.set_page_config(page_title="Budget-bet Pro", layout="wide")
 
-# Auto Refresh ทุก 1 นาที (60,000 ms) - Binance API ทนทานมาก รันถี่ได้
-st_autorefresh(interval=60000, key="binance_refresh")
-
-# CSS บังคับ 2 คอลัมน์บนมือถือ
+# CSS: บังคับ 2 คอลัมน์บนมือถือ + ตกแต่ง Card
 st.markdown("""
     <style>
     [data-testid="column"] { width: calc(50% - 1rem) !important; flex: 1 1 calc(50% - 1rem) !important; min-width: calc(50% - 1rem) !important; }
     [data-testid="stHorizontalBlock"] { flex-direction: row !important; flex-wrap: wrap !important; gap: 0.5rem !important; }
+    .stMetric { background: #1e1e1e; padding: 10px; border-radius: 10px; border: 1px solid #333; }
     @media (max-width: 640px) { .stMarkdown div p, .stMetric div { font-size: 12px !important; } h3 { font-size: 16px !important; } }
     </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 2. CORE FUNCTIONS (BINANCE & GOOGLE SHEETS)
+# 2. DATA FUNCTIONS
 # ---------------------------------------------------------
-def get_thb_rate():
+def get_market_data():
     try:
-        # ดึงราคา USDT/THB จาก Binance P2P หรือใช้ API อ้างอิง (ตัวอย่างใช้ค่ากลางคงที่หรือดึงจาก API อื่น)
-        return 35.5 # ปรับให้ดึงจาก API อัตราแลกเปลี่ยนได้
-    except: return 35.0
-
-def get_binance_data(symbols):
-    results = {}
-    try:
-        # ดึงราคาทั้งหมดในครั้งเดียวเพื่อความเร็ว
+        # ดึงราคาจาก Binance (ตัวเบาที่สุด)
         res = requests.get("https://api.binance.com/api/v3/ticker/24hr").json()
-        df_all = pd.DataFrame(res)
-        rate = get_thb_rate()
-        
-        for s in symbols:
-            pair = f"{s}USDT"
-            row = df_all[df_all['symbol'] == pair]
-            if not row.empty:
-                results[s] = {
-                    'price': float(row['lastPrice'].values[0]) * rate,
-                    'change': float(row['priceChangePercent'].values[0]),
-                    'high': float(row['highPrice'].values[0]) * rate,
-                    'low': float(row['lowPrice'].values[0]) * rate
-                }
-    except Exception as e:
-        st.error(f"Binance Error: {e}")
-    return results, rate
+        df = pd.DataFrame(res)
+        df['lastPrice'] = df['lastPrice'].astype(float)
+        df['priceChangePercent'] = df['priceChangePercent'].astype(float)
+        return df
+    except: return pd.DataFrame()
 
 def load_portfolio():
     try:
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
-        return df.to_dict('records')
-    except: return []
+        return df
+    except: return pd.DataFrame()
 
 # ---------------------------------------------------------
-# 3. UI - SIDEBAR PORTFOLIO
+# 3. ADAPTIVE REFRESH LOGIC (หัวใจของระบบ)
 # ---------------------------------------------------------
-portfolio_data = load_portfolio()
-pinned_symbols = [str(item['symbol']).upper() for item in portfolio_data]
-market_data, usd_thb = get_binance_data(pinned_symbols if pinned_symbols else ['BTC', 'ETH', 'SOL'])
+df_market = get_market_data()
+btc_change = 0
+if not df_market.empty:
+    btc_row = df_market[df_market['symbol'] == 'BTCUSDT']
+    btc_change = abs(btc_row['priceChangePercent'].values[0])
+
+# คำนวณความเร็วในการ Refresh
+if btc_change > 4.0:
+    refresh_ms = 10000 # 10 วิ (ตลาดเดือด)
+    status_msg = "🔥 ตลาดผันผวนสูง (Refresh: 10s)"
+elif btc_change > 1.5:
+    refresh_ms = 30000 # 30 วิ (ตลาดขยับ)
+    status_msg = "⚡ ตลาดปกติ (Refresh: 30s)"
+else:
+    refresh_ms = 60000 # 60 วิ (ตลาดนิ่ง)
+    status_msg = "💤 ตลาดนิ่ง (Refresh: 60s)"
+
+st_autorefresh(interval=refresh_ms, key="adaptive_ref")
+
+# ---------------------------------------------------------
+# 4. UI - SIDEBAR
+# ---------------------------------------------------------
+df_port = load_portfolio()
+rate = 35.5 # สามารถปรับให้ดึง API อัตราแลกเปลี่ยนได้
 
 with st.sidebar:
-    st.title("💼 My Portfolio")
-    if portfolio_data:
-        total_cost, total_value = 0, 0
-        for item in portfolio_data:
-            sym = str(item['symbol']).upper()
-            if sym in market_data:
-                current_p = market_data[sym]['price']
-                val = current_p # สมมติว่าใน Sheets คือราคาทุนต่อ 1 หน่วย
-                total_cost += item['cost']
-                total_value += current_p 
-        
-        diff = total_value - total_cost
-        pct = (diff / total_cost * 100) if total_cost > 0 else 0
-        
-        st.metric("กำไร/ขาดทุนรวม", f"{diff:,.2f} ฿", f"{pct:+.2f}%")
-        
-        # รายชื่อเหรียญที่ Pin ไว้
-        for item in portfolio_data:
-            sym = item['symbol'].upper()
-            if sym in market_data:
-                p = market_data[sym]
-                st.write(f"**{sym}**: {p['price']:,.2f} ({p['change']:+.2f}%)")
+    st.title("💼 Portfolio")
+    st.info(status_msg)
     
-    if st.button("🔄 Force Sync Sheets", use_container_width=True):
-        st.rerun()
+    if not df_port.empty:
+        total_profit = 0
+        for _, row in df_port.iterrows():
+            sym = row['symbol'].upper()
+            m_row = df_market[df_market['symbol'] == f"{sym}USDT"]
+            if not m_row.empty:
+                curr_p = m_row['lastPrice'].values[0] * rate
+                diff = ((curr_p - row['cost']) / row['cost']) * 100
+                st.write(f"**{sym}**: {curr_p:,.2f} ฿ ({diff:+.2f}%)")
+                # ระบบแจ้งเตือนในแอป
+                if diff >= row['target']: st.toast(f"🚀 {sym} ถึงเป้า!", icon="🔥")
+                if diff <= -row['stop']: st.toast(f"🛑 {sym} หลุดจุดคัด!", icon="⚠️")
 
 # ---------------------------------------------------------
-# 4. MAIN UI - MARKET MONITOR
+# 5. MAIN UI (แสดงแค่ 6 ตัว)
 # ---------------------------------------------------------
-st.title("🪙 Budget-bet")
-st.caption(f"🚀 ข้อมูล Real-time จาก Binance API | Rate: 1 USD = {usd_thb} THB")
+st.title("🪙 Budget-bet Pro")
+st.caption(f"Binance Engine | Adaptive Mode: {status_msg}")
+
+# เลือกแสดง 6 ตัวแรกจาก Portfolio หรือเหรียญหลัก
+if not df_port.empty:
+    display_symbols = df_port['symbol'].str.upper().tolist()[:6]
+else:
+    display_symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA']
 
 cols = st.columns(2)
-display_coins = pinned_symbols if pinned_symbols else ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA']
 
-for idx, sym in enumerate(display_coins[:10]):
-    if sym in market_data:
-        data = market_data[sym]
+for idx, sym in enumerate(display_symbols):
+    m_row = df_market[df_market['symbol'] == f"{sym}USDT"]
+    if not m_row.empty:
+        p = m_row['lastPrice'].values[0] * rate
+        chg = m_row['priceChangePercent'].values[0]
+        
         with cols[idx % 2]:
             with st.container(border=True):
-                st.subheader(sym)
-                st.metric("ราคา (บาท)", f"{data['price']:,.2f}", f"{data['change']:+.2f}%")
-                st.caption(f"High: {data['high']:,.0f} | Low: {data['low']:,.0f}")
+                st.subheader(f"{sym}")
+                st.metric("ราคาปัจจุบัน", f"{p:,.2f} ฿", f"{chg:+.2f}%")
                 
-                # ถ้าถึงเป้าใน Sheets ให้ขึ้นเตือน
-                if pinned_symbols and sym in pinned_symbols:
-                    target = next(i['target'] for i in portfolio_data if i['symbol'].upper() == sym)
-                    cost = next(i['cost'] for i in portfolio_data if i['symbol'].upper() == sym)
-                    profit_now = ((data['price'] - cost) / cost) * 100
-                    if profit_now >= target:
-                        st.success(f"🎯 ถึงเป้ากำไร! ({profit_now:.1f}%)")
+                # กราฟ Sparkline แบบง่าย
+                fig = go.Figure(go.Scatter(y=[float(m_row['openPrice'].values[0]), p], 
+                                         line=dict(color='#00ffcc' if chg >= 0 else '#ff4b4b', width=3)))
+                fig.update_layout(height=60, margin=dict(l=0,r=0,t=0,b=0), 
+                                 xaxis_visible=False, yaxis_visible=False, 
+                                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
