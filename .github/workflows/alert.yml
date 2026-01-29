@@ -1,0 +1,26 @@
+name: Crypto Alert Service
+
+on:
+  schedule:
+    # รันทุก 30 นาที (GitHub อาจมีดีเลย์บ้างเล็กน้อยสำหรับแผนฟรี)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # ปุ่มกดรันเองเพื่อทดสอบ
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run Alert Script
+        run: python alert.py
