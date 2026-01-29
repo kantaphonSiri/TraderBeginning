@@ -11,20 +11,27 @@ st.set_page_config(page_title="Budget-bet Pro", layout="wide")
 
 # 2. DATA FUNCTIONS (With Safety Check)
 def get_market_data():
-    try:
-        # ดึงราคาจาก Binance
-        res = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10)
-        data = res.json()
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-            # ตรวจสอบว่ามี Column 'symbol' หรือไม่
-            if 'symbol' in df.columns:
-                df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
-                df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
-                return df
-        return pd.DataFrame()
-    except Exception as e:
-        return pd.DataFrame()
+    # รายชื่อ API สำรองของ Binance
+    endpoints = [
+        "https://api.binance.com/api/v3/ticker/24hr",
+        "https://api1.binance.com/api/v3/ticker/24hr",
+        "https://api3.binance.com/api/v3/ticker/24hr"
+    ]
+    
+    for url in endpoints:
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                df = pd.DataFrame(data)
+                if not df.empty and 'symbol' in df.columns:
+                    df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
+                    df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
+                    return df
+        except:
+            continue # ถ้าตัวแรกพัง ให้ข้ามไปลองตัวถัดไปทันที
+            
+    return pd.DataFrame() # ถ้าพังหมดจริงๆ ค่อยส่งค่าว่าง
 
 def load_portfolio():
     try:
@@ -109,3 +116,4 @@ if not df_market.empty:
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{sym}", config={'displayModeBar': False})
 else:
     st.error("📡 รอการเชื่อมต่อกับ Binance...")
+
