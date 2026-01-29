@@ -11,27 +11,39 @@ st.set_page_config(page_title="Budget-bet Pro", layout="wide")
 
 # 2. DATA FUNCTIONS (With Safety Check)
 def get_market_data():
-    # รายชื่อ API สำรองของ Binance
-    endpoints = [
+    # แผน A: ดึงจาก Binance (ลอง 2 Endpoints)
+    binance_urls = [
         "https://api.binance.com/api/v3/ticker/24hr",
-        "https://api1.binance.com/api/v3/ticker/24hr",
         "https://api3.binance.com/api/v3/ticker/24hr"
     ]
     
-    for url in endpoints:
+    for url in binance_urls:
         try:
             res = requests.get(url, timeout=5)
             if res.status_code == 200:
-                data = res.json()
-                df = pd.DataFrame(data)
-                if not df.empty and 'symbol' in df.columns:
-                    df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
-                    df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
-                    return df
+                df = pd.DataFrame(res.json())
+                df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
+                df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
+                return df
         except:
-            continue # ถ้าตัวแรกพัง ให้ข้ามไปลองตัวถัดไปทันที
-            
-    return pd.DataFrame() # ถ้าพังหมดจริงๆ ค่อยส่งค่าว่าง
+            continue
+
+    # แผน B: ถ้า Binance พังหมด ให้ใช้ Gate.io (เสถียรมากและไม่ค่อยโดนแบน IP)
+    try:
+        res = requests.get("https://api.gateio.ws/api/v4/spot/tickers", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            # แปลง Format ให้เหมือนกับ Binance เพื่อให้โค้ดส่วนอื่นทำงานต่อได้
+            gate_df = pd.DataFrame(data)
+            gate_df['symbol'] = gate_df['currency_pair'].str.replace('_', '')
+            gate_df['lastPrice'] = pd.to_numeric(gate_df['last'], errors='coerce')
+            # คำนวณ % เปลี่ยนแปลงคร่าวๆ (Gate.io ใช้ change_percentage)
+            gate_df['priceChangePercent'] = pd.to_numeric(gate_df['change_percentage'], errors='coerce')
+            return gate_df
+    except:
+        pass
+
+    return pd.DataFrame()
 
 def load_portfolio():
     try:
@@ -116,4 +128,5 @@ if not df_market.empty:
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{sym}", config={'displayModeBar': False})
 else:
     st.error("📡 รอการเชื่อมต่อกับ Binance...")
+
 
