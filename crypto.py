@@ -8,7 +8,7 @@ import time
 # --- [ส่วนที่ต้องแก้] ---
 # 1. สร้าง Google Form ที่มี 3 ข้อ: owner, symbol, buy_price
 # 2. ก๊อปปี้ลิงก์ "Get pre-filled link" มาใส่ที่นี่ และเปลี่ยนคำว่า 'viewform' เป็น 'formResponse'
-FORM_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?gid=820979573&single=true&output=csv"
+FORM_URL = "https://docs.google.com/forms/d/14X89ttm-kAPOD6mJP3RWSP8pntPOHDcURi8W7UjN7jc/formResponse"
 
 # ลิงก์อ่านข้อมูล (อันเดิมของคุณ)
 SHEET_USERS_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?gid=936509889&single=true&output=csv"
@@ -18,9 +18,9 @@ SHEET_PORT_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02a
 def save_to_cloud(owner, symbol, price):
     # เปลี่ยน entry.xxxx ให้ตรงกับ ID ที่ได้จาก Pre-filled link ของคุณ
     payload = {
-        "entry.1234567": owner,
-        "entry.8888888": symbol,
-        "entry.9999999": price
+        "entry.1050662295": owner,
+        "entry.42438203": symbol,
+        "entry.1637597791": price
     }
     try:
         requests.post(FORM_URL, data=payload)
@@ -143,3 +143,4 @@ if not df_raw.empty:
                 fig = go.Figure(go.Scatter(y=[row['open_p'], row['price']], line=dict(color="#f1c40f", width=3)))
                 fig.update_layout(height=40, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True, key=f"gr_{row['symbol']}", config={'displayModeBar': False})
+
