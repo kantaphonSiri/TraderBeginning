@@ -117,7 +117,7 @@ with st.sidebar:
 # 5. MAIN UI
 st_autorefresh(interval=30000, key="v22_refresh")
 df_raw, source = get_market_data()
-st.title("🪙 Budget-Bet")
+st.title("🪙 Budget-Bet Precision")
 
 if not df_raw.empty:
     df = df_raw.copy()
