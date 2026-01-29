@@ -7,7 +7,7 @@ from streamlit_autorefresh import st_autorefresh
 # 1. SETUP
 SHEET_USERS_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-dUIeddHO02aYPCD4f8Wk3_-lMBhz6dJpU8Yi4HjKvl60oEmt_hagssc8FJORHwSb2BaAMBzPRBkg/pub?gid=936509889&single=true&output=csv"
 EXCHANGE_RATE = 35.5
-st.set_page_config(page_title="Crypto Budget-Bet Pro", layout="wide")
+st.set_page_config(page_title="Crypto Analyzer Pro", layout="wide")
 
 # --- INITIALIZE SESSION STATE ---
 if 'user' not in st.session_state: st.session_state.user = None
@@ -15,113 +15,117 @@ if 'budget' not in st.session_state: st.session_state.budget = 0.0
 if 'pinned_list' not in st.session_state: st.session_state.pinned_list = []
 if 'buy_prices' not in st.session_state: st.session_state.buy_prices = {}
 
-# 2. ROBUST DATA ENGINE (Multi-Endpoint)
-def get_data():
-    # รายชื่อ API สำรองกรณีตัวหลักล่ม
-    endpoints = [
-        "https://api.binance.com/api/v3/ticker/24hr",
-        "https://api1.binance.com/api/v3/ticker/24hr",
-        "https://api2.binance.com/api/v3/ticker/24hr"
-    ]
-    for url in endpoints:
-        try:
-            res = requests.get(url, timeout=5)
-            if res.status_code == 200:
-                df = pd.DataFrame(res.json())
-                df['price'] = pd.to_numeric(df['lastPrice'], errors='coerce')
-                df['change'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
-                df['volume'] = pd.to_numeric(df['quoteVolume'], errors='coerce')
-                df['open_p'] = pd.to_numeric(df['openPrice'], errors='coerce')
-                return df[['symbol', 'price', 'change', 'volume', 'open_p']].dropna(), "Active"
-        except:
-            continue
+# 2. ULTRA-STABLE DATA ENGINE (Binance + Gate.io Fallback)
+def get_market_data():
+    # แผน A: Binance
+    try:
+        res = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=3)
+        if res.status_code == 200:
+            df = pd.DataFrame(res.json())
+            df['price'] = pd.to_numeric(df['lastPrice'])
+            df['change'] = pd.to_numeric(df['priceChangePercent'])
+            df['volume'] = pd.to_numeric(df['quoteVolume'])
+            return df[['symbol', 'price', 'change', 'volume']].dropna(), "Binance (Main)"
+    except: pass
+
+    # แผน B: Gate.io (เสถียรมากสำหรับ Cloud)
+    try:
+        res = requests.get("https://api.gateio.ws/api/v4/spot/tickers", timeout=3)
+        if res.status_code == 200:
+            df = pd.DataFrame(res.json())
+            df['symbol'] = df['currency_pair'].str.replace('_', '')
+            df['price'] = pd.to_numeric(df['last'])
+            df['change'] = pd.to_numeric(df['change_percentage'])
+            df['volume'] = pd.to_numeric(df['quote_volume'])
+            return df[['symbol', 'price', 'change', 'volume']].dropna(), "Gate.io (Backup)"
+    except: pass
+    
     return pd.DataFrame(), "Offline"
 
-# 3. SIDEBAR (Login & Portfolio)
+# 3. SIDEBAR: LOGIN & PORTFOLIO ANALYSIS
 with st.sidebar:
     if st.session_state.user is None:
-        st.title("🔐 Login")
-        with st.form("login_form"):
-            u_name = st.text_input("Username")
-            u_pin = st.text_input("PIN", type="password")
-            if st.form_submit_button("Login"):
+        st.title("🔐 เข้าสู่ระบบ")
+        with st.form("login"):
+            u = st.text_input("Username")
+            p = st.text_input("PIN", type="password")
+            if st.form_submit_button("ตกลง"):
                 try:
-                    df_users = pd.read_csv(SHEET_USERS_URL)
-                    match = df_users[(df_users['username'].astype(str) == str(u_name)) & 
-                                     (df_users['pin'].astype(str) == str(u_pin))]
+                    users = pd.read_csv(SHEET_USERS_URL)
+                    match = users[(users['username'].astype(str) == str(u)) & (users['pin'].astype(str) == str(p))]
                     if not match.empty:
-                        st.session_state.user = u_name
+                        st.session_state.user = u
                         st.session_state.budget = float(match.iloc[0]['budget'])
                         st.rerun()
                     else: st.error("ข้อมูลไม่ถูกต้อง")
                 except: st.error("เชื่อมต่อฐานข้อมูลไม่ได้")
     else:
         st.title(f"👤 {st.session_state.user}")
-        st.session_state.budget = st.number_input("💵 งบกรองเหรียญ (บาท):", value=st.session_state.budget)
-        
-        if st.button("Log out"):
+        st.session_state.budget = st.number_input("💰 งบกรองเหรียญ (฿):", value=st.session_state.budget)
+        if st.button("ออกจากระบบ"):
             st.session_state.user = None
             st.rerun()
 
         st.divider()
-        st.subheader("📌 พอร์ตจำลองวิเคราะห์")
+        st.subheader("📊 วิเคราะห์พอร์ตส่วนตัว")
         
-        total_profit_loss = 0.0
+        total_pnl = 0.0
+        for coin in st.session_state.pinned_list:
+            with st.expander(f"💎 {coin.replace('USDT','')}", expanded=True):
+                # ช่องกรอกราคาที่ซื้อมาจริง
+                b_p = st.number_input(f"ราคาที่ซื้อ ({coin})", key=f"bp_{coin}", value=st.session_state.buy_prices.get(coin, 0.0))
+                st.session_state.buy_prices[coin] = b_p
+                
+                # Slider จำลอง % กำไร/ขาดทุน
+                sim = st.slider(f"จำลองกำไร/ขาดทุน %", -50, 100, 0, key=f"sim_{coin}")
+                
+                if b_p > 0:
+                    current_pnl = (b_p * sim) / 100
+                    total_pnl += current_pnl
+                    st.write(f"กำไรคงเหลือ: **{current_pnl:,.2f} ฿**")
+        
         if st.session_state.pinned_list:
-            for coin in st.session_state.pinned_list:
-                with st.expander(f"📉 {coin.replace('USDT','')}", expanded=True):
-                    # กรอกต้นทุน
-                    buy_p = st.number_input(f"ต้นทุน ({coin})", key=f"buy_{coin}", value=st.session_state.buy_prices.get(coin, 0.0))
-                    st.session_state.buy_prices[coin] = buy_p
-                    
-                    # แถบเลื่อนปรับกำไร/ขาดทุน
-                    sim_pct = st.slider(f"ปรับ % ({coin})", -100, 200, 0, key=f"sim_{coin}")
-                    
-                    if buy_p > 0:
-                        profit_val = (buy_p * sim_pct) / 100
-                        total_profit_loss += profit_val
-                        st.write(f"กำไร/ขาดทุน: **{profit_val:,.2f} ฿**")
-            
-            # สรุปยอดรวมด้านล่าง Sidebar
             st.divider()
-            st.markdown("### 💰 สรุปรวมทุกเหรียญ")
-            color = "green" if total_profit_loss >= 0 else "red"
-            st.markdown(f"<h2 style='color:{color};'>{total_profit_loss:,.2f} ฿</h2>", unsafe_allow_html=True)
-        else:
-            st.caption("ยังไม่มีเหรียญที่ Pin")
+            st.markdown("### 📈 ยอดกำไรรวมทั้งหมด")
+            pnl_color = "#00ffcc" if total_pnl >= 0 else "#ff4b4b"
+            st.markdown(f"<h2 style='color:{pnl_color}; text-align:center;'>{total_pnl:,.2f} ฿</h2>", unsafe_allow_html=True)
 
 # 4. MAIN UI
-st_autorefresh(interval=30000, key="v16_refresh")
-df_raw, api_status = get_data()
+st_autorefresh(interval=30000, key="v17_refresh")
+df_raw, source_name = get_market_data()
 
-st.title("🪙 Budget-Bet Analyzer")
-st.caption(f"API Status: {api_status} | User: {st.session_state.user if st.session_state.user else 'Guest'}")
+st.title("🪙 Budget-Bet")
+st.caption(f"Source: {source_name} | Exchange Rate: {EXCHANGE_RATE} ฿/USD")
 
 if not df_raw.empty:
-    df_global = df_raw.copy()
-    df_global = df_global[df_global['symbol'].str.endswith('USDT')]
-    df_global = df_global.sort_values('volume', ascending=False).head(200)
-    df_global['price_thb'] = df_global['price'] * EXCHANGE_RATE
-    
-    # การกรอง
-    display_df = df_global.head(6)
-    if st.session_state.user and st.session_state.budget > 0:
-        display_df = df_global[df_global['price_thb'] <= st.session_state.budget].head(6)
+    df = df_raw.copy()
+    df = df[df['symbol'].str.endswith('USDT')]
+    df['price_thb'] = df['price'] * EXCHANGE_RATE
+    df = df.sort_values('volume', ascending=False)
 
+    # กรองตามงบ
+    if st.session_state.user and st.session_state.budget > 0:
+        display_df = df[df['price_thb'] <= st.session_state.budget].head(6)
+        st.subheader(f"🚀 เหรียญแนะนำในงบ {st.session_state.budget:,.0f} ฿")
+    else:
+        display_df = df.head(6)
+        st.subheader("🏆 เหรียญยอดนิยมในตลาด")
+
+    # แสดงผล Card
     cols = st.columns(2)
     for i, row in enumerate(display_df.to_dict('records')):
         with cols[i % 2]:
             with st.container(border=True):
                 c1, c2 = st.columns([4,1])
-                sym = row['symbol']
-                c1.subheader(f"{sym.replace('USDT','')}")
+                s_name = row['symbol'].replace('USDT','')
+                c1.markdown(f"### {s_name}")
                 
                 if st.session_state.user:
-                    if c2.button("📌", key=f"btn_{sym}"):
-                        if sym not in st.session_state.pinned_list:
-                            st.session_state.pinned_list.append(sym)
+                    if c2.button("📌", key=f"pin_{s_name}"):
+                        if row['symbol'] not in st.session_state.pinned_list:
+                            st.session_state.pinned_list.append(row['symbol'])
                             st.rerun()
-                
-                st.metric("ราคาปัจจุบัน", f"{row['price_thb']:,.2f} ฿", f"{row['change']:+.2f}%")
+
+                st.metric("ราคาตลาด", f"{row['price_thb']:,.2f} ฿", f"{row['change']:+.2f}%")
 else:
-    st.error("📡 ระบบกำลังพยายามเชื่อมต่อ API สำรอง... กรุณารอ 30 วินาที")
+    st.error("⚠️ ไม่สามารถเชื่อมต่อ API ได้ในขณะนี้ ระบบจะพยายามใหม่ทุก 30 วินาที")
