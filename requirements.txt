@@ -1,6 +1,7 @@
-streamlit
-yfinance
+fastapi
+uvicorn
 pandas
+pandas_ta
+yfinance
+scikit-learn
 requests
-plotly
-streamlit-autorefresh
