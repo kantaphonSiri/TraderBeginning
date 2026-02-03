@@ -9,12 +9,27 @@ from google.oauth2.service_account import Credentials
 from sklearn.ensemble import RandomForestRegressor
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
+from textblob import TextBlob
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="AI Crypto Compounder", layout="wide")
+st.set_page_config(page_title="Blue-Chip bet", layout="wide")
 st_autorefresh(interval=600 * 1000, key="auto_trade_refresh")
 
-# --- 2. ฟังก์ชันเชื่อมต่อ Google Sheets (รองรับแท็บ trade_learning) ---
+# --- 2. ฟังก์ชันวิเคราะห์อารมณ์ข่าว (News Sentiment) ---
+def get_news_sentiment(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+        if not news: return 0
+        sentiment_score = 0
+        for item in news[:3]: # วิเคราะห์ 3 ข่าวล่าสุด
+            analysis = TextBlob(item['title'])
+            sentiment_score += analysis.sentiment.polarity
+        return sentiment_score / 3
+    except:
+        return 0
+
+# --- 3. ฟังก์ชันเชื่อมต่อ Google Sheets ---
 def init_gsheet(sheet_name="trade_learning"):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -24,9 +39,10 @@ def init_gsheet(sheet_name="trade_learning"):
         client = gspread.authorize(creds)
         return client.open("Blue-chip Bet").worksheet(sheet_name)
     except:
+        st.error("❌ ไม่สามารถเชื่อมต่อ Google Sheets ได้ กรุณาตรวจสอบชื่อไฟล์และแท็บ")
         return None
 
-# --- 3. ฟังก์ชัน AI วิเคราะห์ (เหมือนเดิมแต่ดึงข้อมูลแม่นยำขึ้น) ---
+# --- 4. ฟังก์ชัน AI วิเคราะห์กราฟ + ข่าว ---
 @st.cache_data(ttl=300)
 def analyze_coin_ai(symbol):
     try:
@@ -43,72 +59,91 @@ def analyze_coin_ai(symbol):
         cur_price = float(df.iloc[-1]['Close'])
         pred_price = model.predict(df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[[-1]])[0]
         
+        # Scoring Logic
         score = 0
         if cur_price > df.iloc[-1]['EMA_20'] > df.iloc[-1]['EMA_50']: score += 40
         if 40 < df.iloc[-1]['RSI_14'] < 65: score += 30
         if pred_price > cur_price: score += 30
-        return {"Symbol": symbol, "Price": cur_price, "Score": score}
+        
+        # เพิ่มระบบ Sentiment ข่าว
+        sentiment = get_news_sentiment(symbol)
+        if sentiment < -0.1: score -= 20 # ข่าวลบ หักคะแนน
+        elif sentiment > 0.1: score += 10 # ข่าวดี เพิ่มคะแนน
+        
+        return {"Symbol": symbol, "Price": cur_price, "Score": score, "Sentiment": sentiment}
     except: return None
 
-# --- 4. หัวใจหลัก: ระบบ Trading Logic & Learning ---
+# --- 5. ระบบ Trading Logic (Money Management & Reset Logic) ---
 def run_auto_trade(res, sheet, current_balance):
-    if not sheet: return
+    if not sheet or current_balance < 100: 
+        return
     
     data = sheet.get_all_records()
     df_trade = pd.DataFrame(data)
     
-    # เช็คว่ามีเหรียญนี้ถืออยู่ไหม
     is_holding = False
     if not df_trade.empty:
         is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD'))
     
-    # LOGIC ซื้อ: คะแนนสูง และ ยังไม่มีเหรียญนี้ในมือ
-    if res['Score'] >= 85 and not is_holding:
+    # 🔵 ซื้อ: ใช้เงิน 20% ของ Balance ที่มี
+    if res['Score'] >= 80 and not is_holding:
+        investment = current_balance * 0.20
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # บันทึก: [วันเวลา, เหรียญ, สถานะ, ราคาซื้อ, ราคาขาย, กำไร%, AI_Score, Balance]
-        row = [now, res['Symbol'], "HOLD", res['Price'], 0, 0, res['Score'], current_balance]
+        # คอลัมน์: วันเวลา, เหรียญ, สถานะ, ราคาซื้อ, ราคาขาย, กำไร(%), AI_Score, Balance
+        row = [now, res['Symbol'], "HOLD", res['Price'], 0, 0, res['Score'], round(current_balance, 2)]
         sheet.append_row(row)
-        st.toast(f"🚀 AI ซื้อ {res['Symbol']} ที่ราคา {res['Price']:.2f}")
+        st.toast(f"🚀 AI เปิดไม้ {res['Symbol']} ด้วยเงิน ฿{investment:.2f}")
 
-    # LOGIC ขาย: กำไร > 3% หรือ ขาดทุน > 2% หรือ คะแนนตกต่ำกว่า 50
+    # 🔴 ขาย: Take Profit / Stop Loss
     elif is_holding:
         idx = df_trade[(df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')].index[-1]
         entry_price = float(df_trade.loc[idx, 'ราคาซื้อ'])
+        hist_bal = float(df_trade.loc[idx, 'Balance'])
+        investment_val = hist_bal * 0.20 # คำนวณทุนไม้เดิม
+        
         profit_pct = ((res['Price'] - entry_price) / entry_price) * 100
         
         if profit_pct >= 3.0 or profit_pct <= -2.0 or res['Score'] < 50:
-            new_balance = current_balance * (1 + (profit_pct/100))
-            # อัปเดตแถวใน Sheets (gspread index เริ่มที่ 1 และมี header จึงเป็น idx + 2)
+            return_cash = investment_val * (1 + (profit_pct/100))
+            # อัปเดต Balance ใหม่ = เงินเดิมที่เหลือ + ทุนคืนพร้อมกำไร/ขาดทุน
+            new_balance = (current_balance - investment_val) + return_cash
+            
             row_num = int(idx) + 2
-            sheet.update_cell(row_num, 3, "SOLD")       # เปลี่ยนสถานะ
-            sheet.update_cell(row_num, 5, res['Price']) # ราคาขาย
+            sheet.update_cell(row_num, 3, "SOLD")
+            sheet.update_cell(row_num, 5, res['Price'])
             sheet.update_cell(row_num, 6, f"{profit_pct:.2f}%")
             sheet.update_cell(row_num, 8, round(new_balance, 2))
-            st.toast(f"💰 AI ขาย {res['Symbol']} กำไร {profit_pct:.2f}%")
+            st.toast(f"💰 ขาย {res['Symbol']} สรุปกำไร {profit_pct:.2f}%")
 
-# --- 5. หน้าจอ UI ---
-st.title("🤖 AI Auto-Compounder (500 ➡️ 1,000)")
+# --- 6. UI Dashboard ---
+st.title("🤖Blue-chip Bet")
 sheet = init_gsheet()
-watch_list = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD", "DOT-USD"]
+watch_list = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD", "DOT-USD", "LINK-USD"]
 
 # ดึง Balance ล่าสุด
 current_bal = 500.0
 if sheet:
-    all_data = sheet.get_all_records()
-    if all_data:
-        last_row = all_data[-1]
-        current_bal = float(last_row.get('Balance', 500.0))
+    all_records = sheet.get_all_records()
+    if all_records:
+        current_bal = float(all_records[-1].get('Balance', 500.0))
 
-st.metric("พอร์ตจำลองปัจจุบัน (Equity)", f"฿{current_bal:,.2f}", f"{((current_bal-500)/500)*100:.2f}% จากเงินต้น")
+c1, c2 = st.columns(2)
+c1.metric("เงินสดคงเหลือ (Cash)", f"฿{current_bal:,.2f}")
+c2.metric("สถานะระบบ", "Running ✅" if current_bal >= 100 else "Stopped 🛑")
 
-# เริ่มสแกนและเทรด
-for ticker in watch_list:
+if current_bal < 100:
+    st.error("🚨 Balance ต่ำกว่า 100 บาท ระบบหยุดเทรดอัตโนมัติ กรุณาเติมเงินใน Sheets")
+
+# รันระบบ
+progress = st.progress(0)
+for idx, ticker in enumerate(watch_list):
     result = analyze_coin_ai(ticker)
     if result:
         run_auto_trade(result, sheet, current_bal)
+    progress.progress((idx + 1) / len(watch_list))
 
-# โชว์ตารางการเรียนรู้
-st.subheader("📚 บันทึกการเรียนรู้ของ AI (Trade Log)")
+st.divider()
+st.subheader("📚 บันทึกการเทรดและเรียนรู้ (Trade Log)")
 if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
