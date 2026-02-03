@@ -86,7 +86,7 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
         investment_thb = total_balance * 0.20
         coin_amount = investment_thb / price_thb
         now_th = datetime.utcnow() + timedelta(hours=7)
-        now = now_th.strftime("%Y-%m-%d %H:%M:%S")
+        now = now_th.strftime("%H:%M:%S %d-%m-%Y")
         row = [now, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, 
                res['Score'], round(total_balance, 2), round(coin_amount, 6), res['Headline']]
         sheet.append_row(row)
@@ -153,7 +153,7 @@ if st.session_state.bot_active:
         
         # อัปเดต UI หลังจากสแกนครบทุกตัว
         now_th = datetime.utcnow() + timedelta(hours=7)
-        now = now_th.strftime("%Y-%m-%d %H:%M:%S")
+        now = now_th.strftime("%H:%M:%S %d-%m-%Y")
         st.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {now} (กำลังรอรอบถัดไปใน 10 นาที)")
         
         # สั่งหยุดรอ 10 นาที (600 วินาที)
@@ -168,5 +168,6 @@ if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
         st.dataframe(hist.iloc[::-1], use_container_width=True)
+
 
 
