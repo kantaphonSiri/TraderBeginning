@@ -7,3 +7,4 @@ gspread
 google-auth
 streamlit-autorefresh
 protobuf==3.20.3
+textblob
