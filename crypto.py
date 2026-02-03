@@ -11,18 +11,27 @@ def get_market_sentiment():
 
 def prepare_data(symbol="BTC-USD"):
     # 1. ดึงราคาย้อนหลัง
+    # ใส่ auto_adjust=True และแก้ปัญหา MultiIndex
     df = yf.download(symbol, period="60d", interval="1h")
     
-    # 2. คำนวณ Technical Indicators (ใส่สมองให้ AI)
-    df.ta.rsi(length=14, append=True)
-    df.ta.ema(length=20, append=True)
-    df.ta.macd(append=True)
-    
-    # 3. ใส่ข้อมูล Sentiment ลงไปในทุกแถว
-    df['sentiment'] = get_market_sentiment()
-    
+    # --- แก้ไขตรงนี้: ลบ MultiIndex ออก ---
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0) 
+    # ---------------------------------------
+
+    # 2. คำนวณ Technical Indicators
+    # ตรวจสอบว่ามีข้อมูลจริงไหมก่อนคำนวณ
+    if not df.empty:
+        df.ta.rsi(length=14, append=True)
+        df.ta.ema(length=20, append=True)
+        df.ta.macd(append=True)
+        
+        # 3. ใส่ข้อมูล Sentiment
+        df['sentiment'] = get_market_sentiment()
+        
     return df.dropna()
 
 # ทดสอบรัน
 data = prepare_data()
 print(data.tail())
+
