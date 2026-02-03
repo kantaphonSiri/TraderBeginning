@@ -1,7 +1,7 @@
-fastapi
-uvicorn
+gspread
+google-auth
 pandas
 pandas_ta
 yfinance
 scikit-learn
-requests
+streamlit-autorefresh
