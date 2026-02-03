@@ -11,7 +11,7 @@ from datetime import datetime
 import json
 
 # --- 1. การตั้งค่าหน้าจอและระบบ Auto-refresh ---
-st.set_page_config(page_title="AI Blue-chip Advisor", layout="wide")
+st.set_page_config(page_title="Blue-chip Bet", layout="wide")
 # ระบบจะ Refresh ตัวเองอัตโนมัติทุก 10 นาที (600,000 มิลลิวินาที)
 count = st_autorefresh(interval=600 * 1000, key="crypto_live_update")
 
@@ -139,4 +139,5 @@ if sheet:
             st.info("ยังไม่มีข้อมูลประวัติใน Google Sheets")
     except:
         st.warning("ไม่สามารถดึงข้อมูลประวัติได้ในขณะนี้")
+
 
