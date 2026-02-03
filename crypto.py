@@ -10,9 +10,22 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Blue-Chip Bet", layout="wide")
+st.set_page_config(page_title="Pepper - Blue-Chip Hunter", layout="wide")
 
-# --- 2. ฟังก์ชันดึงอัตราแลกเปลี่ยน Real-time ---
+# --- 2. ฟังก์ชันดึงรายชื่อเหรียญ Blue-chip แบบ Dynamic (NEW!) ---
+def get_blue_chip_list():
+    try:
+        # ดึงข้อมูลกลุ่ม Crypto ที่มี Volume สูงสุดจาก Yahoo Finance (Top 10 Blue-chips)
+        # เราดึงข้อมูล 1 วันมาสั้นๆ เพื่อเอาแค่รายชื่อ Symbols
+        tickers_data = yf.download("BTC-USD ETH-USD SOL-USD BNB-USD ADA-USD XRP-USD DOT-USD LINK-USD AVAX-USD DOGE-USD", 
+                                   period="1d", interval="1m", progress=False)
+        if isinstance(tickers_data.columns, pd.MultiIndex):
+            return list(set([col[1] for col in tickers_data.columns]))
+        return ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD"]
+    except:
+        return ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD"]
+
+# --- 3. ฟังก์ชันดึงอัตราแลกเปลี่ยน Real-time ---
 def get_live_thb_rate():
     try:
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
@@ -22,7 +35,7 @@ def get_live_thb_rate():
     except:
         return 35.5
 
-# --- 3. ฟังก์ชันวิเคราะห์ข่าว ---
+# --- 4. ฟังก์ชันวิเคราะห์ข่าว ---
 def get_news_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
@@ -37,7 +50,7 @@ def get_news_data(symbol):
     except:
         return 0, "ดึงข้อมูลข่าวไม่ได้"
 
-# --- 4. ฟังก์ชันเชื่อมต่อ Google Sheets ---
+# --- 5. ฟังก์ชันเชื่อมต่อ Google Sheets ---
 def init_gsheet(sheet_name="trade_learning"):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -49,7 +62,7 @@ def init_gsheet(sheet_name="trade_learning"):
     except:
         return None
 
-# --- 5. ฟังก์ชัน AI วิเคราะห์กราฟ ---
+# --- 6. ฟังก์ชัน AI วิเคราะห์กราฟ ---
 @st.cache_data(ttl=300)
 def analyze_coin_ai(symbol):
     try:
@@ -72,9 +85,7 @@ def analyze_coin_ai(symbol):
         return {"Symbol": symbol, "Price_USD": cur_price_usd, "Score": score, "Headline": headline}
     except: return None
 
-# --- 6. ระบบ Trading Logic ---
-# --- แก้ไขในส่วนระบบ Trading Logic ---
-
+# --- 7. ระบบ Trading Logic ---
 def run_auto_trade(res, sheet, total_balance, live_rate):
     if not sheet or total_balance < 100: return
     
@@ -84,14 +95,14 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
     # 1. เช็คสถานะการถือครองของเหรียญนี้
     is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')) if not df_trade.empty else False
     
-    # 2. นับจำนวนเหรียญทั้งหมดที่กำลังถืออยู่ (NEW!)
+    # 2. นับจำนวนเหรียญทั้งหมดที่กำลังถืออยู่
     current_holding_count = len(df_trade[df_trade['สถานะ'] == 'HOLD']) if not df_trade.empty else 0
     
     price_thb = res['Price_USD'] * live_rate
 
-    # 🔵 LOGIC ซื้อ (เพิ่มเงื่อนไข: ต้องถือไม่เกิน 3 ตัว)
+    # 🔵 LOGIC ซื้อ (จำกัดแค่ 3 ตัว)
     if res['Score'] >= 80 and not is_holding:
-        if current_holding_count < 3: # <--- ปิดจุดอ่อนข้อ A: จำกัดแค่ 3 ตัว
+        if current_holding_count < 3: 
             investment_thb = total_balance * 0.20
             coin_amount = investment_thb / price_thb
             now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y")
@@ -101,10 +112,9 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             sheet.append_row(row)
             st.toast(f"🚀 ซื้อ {res['Symbol']} ตัวที่ {current_holding_count + 1}")
         else:
-            # ถ้าครบ 3 ตัวแล้ว จะไม่ซื้อเพิ่มแม้ Score จะสูง
             pass 
 
-    # 🔴 LOGIC ขาย (เหมือนเดิม)
+    # 🔴 LOGIC ขาย
     elif is_holding:
         idx = df_trade[(df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')].index[-1]
         entry_price_thb = float(df_trade.loc[idx, 'ราคาซื้อ(฿)'])
@@ -112,7 +122,6 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
         
         profit_pct = ((price_thb - entry_price_thb) / entry_price_thb) * 100
         
-        # ขายเมื่อ: กำไร 3%, ขาดทุน 2%, หรือ AI บอกว่าไม่น่ารอด (Score < 50)
         if profit_pct >= 3.0 or profit_pct <= -2.0 or res['Score'] < 50:
             investment_val = hist_bal * 0.20
             return_cash = investment_val * (1 + (profit_pct/100))
@@ -125,10 +134,9 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             sheet.update_cell(row_num, 8, round(new_balance, 2))
             st.toast(f"💰 ขาย {res['Symbol']} คืน Slot ให้ว่าง")
 
-# --- 7. UI Dashboard & Background Loop ---
-st.title("🦔 ต้าว Pepper จัดหั้ยย")
+# --- 8. UI Dashboard & Background Loop ---
+st.title("🦔 ต้าว Pepper - Blue-chip Hunter")
 
-# สร้างที่สำหรับวางปุ่มเปิด/ปิดบอท
 if "bot_active" not in st.session_state:
     st.session_state.bot_active = False
 
@@ -138,10 +146,14 @@ if col_btn1.button("▶️ เริ่มการทำงาน (Start Bot)")
 if col_btn2.button("🛑 หยุดการทำงาน (Stop Bot)"):
     st.session_state.bot_active = False
 
-# ส่วนแสดงผล Dashboard
+# --- ส่วนแสดงสถานะเหรียญที่เฝ้าดู ---
 sheet = init_gsheet()
 live_thb = get_live_thb_rate()
-watch_list = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD", "DOT-USD", "LINK-USD"]
+watch_list = get_blue_chip_list() # ดึงเหรียญ Blue-chip แบบ Dynamic ไม่ Fix Code
+
+st.subheader("🎯 เหรียญ Blue-chip ที่กำลังเฝ้าดู")
+coin_tags = " | ".join([f"**{coin}**" for coin in watch_list])
+st.info(f"ขณะนี้ Pepper กำลังวิเคราะห์: {coin_tags}")
 
 # ดึงยอดล่าสุดมาโชว์บน UI
 total_bal = 500.0
@@ -162,22 +174,21 @@ c3.metric("พอร์ตสุทธิ (Equity)", f"฿{total_bal:,.2f}")
 
 # --- ส่วนของการทำงาน Background ---
 if st.session_state.bot_active:
-    st.success("🦔 ต้าว Pepper กำลังสแกนหาจังหวะเทรดอยู่...")
+    st.success(f"🔥 Pepper กำลังสแกน {len(watch_list)} เหรียญนี้ทุก 10 นาที...")
     
-    # รัน Loop การทำงาน
     while st.session_state.bot_active:
+        status_placeholder = st.empty()
         for ticker in watch_list:
+            status_placeholder.write(f"⏳ กำลังวิเคราะห์: {ticker}...")
             result = analyze_coin_ai(ticker)
             if result:
                 run_auto_trade(result, sheet, total_bal, live_thb)
         
-        # อัปเดต UI หลังจากสแกนครบทุกตัว
-        now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y")
-        st.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {now} (กำลังรอรอบถัดไปใน 10 นาที)")
+        now_str = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y")
+        status_placeholder.write(f"✅ สแกนรอบล่าสุดเสร็จสิ้นเมื่อ: {now_str}")
         
-        # สั่งหยุดรอ 10 นาที (600 วินาที)
         time.sleep(600)
-        st.rerun() # สั่งให้ Streamlit Refresh หน้าจอเพื่อดึงยอดเงินล่าสุด
+        st.rerun()
 else:
     st.warning("💤 บอทปิดอยู่ กดปุ่ม Start เพื่อเริ่มการทำงาน")
 
@@ -187,7 +198,3 @@ if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
         st.dataframe(hist.iloc[::-1], use_container_width=True)
-
-
-
-
