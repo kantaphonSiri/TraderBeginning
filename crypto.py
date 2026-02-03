@@ -27,7 +27,7 @@ def init_gsheet():
         client = gspread.authorize(creds)
         
         # ค้นหาไฟล์ Google Sheets (แก้ชื่อไฟล์ตรงนี้)
-        sheet = client.open("ชื่อไฟล์ของคุณ").sheet1 
+        sheet = client.open("Blue-chip Bet").sheet1 
         return sheet
     except Exception as e:
         st.error(f"เชื่อมต่อ Google Sheets ไม่ได้: {e}")
@@ -84,7 +84,7 @@ def analyze_coin_ai(symbol, timeframe):
         return None
 
 # --- 4. ส่วนการแสดงผล UI ---
-st.title("💎 AI Blue-chip Advisor (Cloud Persistence)")
+st.title("💎 Blue-chip Bet")
 st.caption(f"อัปเดตอัตโนมัติรอบที่: {count} | เวลา: {datetime.now().strftime('%H:%M:%S')}")
 
 # Sidebar
@@ -139,3 +139,4 @@ if sheet:
             st.info("ยังไม่มีข้อมูลประวัติใน Google Sheets")
     except:
         st.warning("ไม่สามารถดึงข้อมูลประวัติได้ในขณะนี้")
+
