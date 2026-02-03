@@ -73,37 +73,57 @@ def analyze_coin_ai(symbol):
     except: return None
 
 # --- 6. ระบบ Trading Logic ---
+# --- แก้ไขในส่วนระบบ Trading Logic ---
+
 def run_auto_trade(res, sheet, total_balance, live_rate):
     if not sheet or total_balance < 100: return
+    
     data = sheet.get_all_records()
     df_trade = pd.DataFrame(data)
-    is_holding = False
-    if not df_trade.empty:
-        is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD'))
+    
+    # 1. เช็คสถานะการถือครองของเหรียญนี้
+    is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')) if not df_trade.empty else False
+    
+    # 2. นับจำนวนเหรียญทั้งหมดที่กำลังถืออยู่ (NEW!)
+    current_holding_count = len(df_trade[df_trade['สถานะ'] == 'HOLD']) if not df_trade.empty else 0
     
     price_thb = res['Price_USD'] * live_rate
+
+    # 🔵 LOGIC ซื้อ (เพิ่มเงื่อนไข: ต้องถือไม่เกิน 3 ตัว)
     if res['Score'] >= 80 and not is_holding:
-        investment_thb = total_balance * 0.20
-        coin_amount = investment_thb / price_thb
-        now_th = datetime.utcnow() + timedelta(hours=7)
-        now = now_th.strftime("%H:%M:%S %d-%m-%Y")
-        row = [now, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, 
-               res['Score'], round(total_balance, 2), round(coin_amount, 6), res['Headline']]
-        sheet.append_row(row)
+        if current_holding_count < 3: # <--- ปิดจุดอ่อนข้อ A: จำกัดแค่ 3 ตัว
+            investment_thb = total_balance * 0.20
+            coin_amount = investment_thb / price_thb
+            now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y")
+            
+            row = [now, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, 
+                   res['Score'], round(total_balance, 2), round(coin_amount, 6), res['Headline']]
+            sheet.append_row(row)
+            st.toast(f"🚀 ซื้อ {res['Symbol']} ตัวที่ {current_holding_count + 1}")
+        else:
+            # ถ้าครบ 3 ตัวแล้ว จะไม่ซื้อเพิ่มแม้ Score จะสูง
+            pass 
+
+    # 🔴 LOGIC ขาย (เหมือนเดิม)
     elif is_holding:
         idx = df_trade[(df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')].index[-1]
         entry_price_thb = float(df_trade.loc[idx, 'ราคาซื้อ(฿)'])
         hist_bal = float(df_trade.loc[idx, 'Balance'])
+        
         profit_pct = ((price_thb - entry_price_thb) / entry_price_thb) * 100
+        
+        # ขายเมื่อ: กำไร 3%, ขาดทุน 2%, หรือ AI บอกว่าไม่น่ารอด (Score < 50)
         if profit_pct >= 3.0 or profit_pct <= -2.0 or res['Score'] < 50:
             investment_val = hist_bal * 0.20
             return_cash = investment_val * (1 + (profit_pct/100))
             new_balance = (total_balance - investment_val) + return_cash
+            
             row_num = int(idx) + 2
             sheet.update_cell(row_num, 3, "SOLD")
             sheet.update_cell(row_num, 5, round(price_thb, 4))
             sheet.update_cell(row_num, 6, f"{profit_pct:.2f}%")
             sheet.update_cell(row_num, 8, round(new_balance, 2))
+            st.toast(f"💰 ขาย {res['Symbol']} คืน Slot ให้ว่าง")
 
 # --- 7. UI Dashboard & Background Loop ---
 st.title("🦔 ต้าว Pepper จัดหั้ยย")
@@ -152,8 +172,7 @@ if st.session_state.bot_active:
                 run_auto_trade(result, sheet, total_bal, live_thb)
         
         # อัปเดต UI หลังจากสแกนครบทุกตัว
-        now_th = datetime.utcnow() + timedelta(hours=7)
-        now = now_th.strftime("%H:%M:%S %d-%m-%Y")
+        now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y")
         st.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {now} (กำลังรอรอบถัดไปใน 10 นาที)")
         
         # สั่งหยุดรอ 10 นาที (600 วินาที)
@@ -168,6 +187,7 @@ if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
         st.dataframe(hist.iloc[::-1], use_container_width=True)
+
 
 
 
