@@ -8,6 +8,7 @@ from google.oauth2.service_account import Credentials
 from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime
 from textblob import TextBlob
+from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
 st.set_page_config(page_title="Blue-Chip Bet", layout="wide")
@@ -85,7 +86,8 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
     if res['Score'] >= 80 and not is_holding:
         investment_thb = total_balance * 0.20
         coin_amount = investment_thb / price_thb
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_th = datetime.utcnow() + timedelta(hours=7)
+        now = now_th.strftime("%Y-%m-%d %H:%M:%S")
         row = [now, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, 
                res['Score'], round(total_balance, 2), round(coin_amount, 6), res['Headline']]
         sheet.append_row(row)
@@ -165,3 +167,4 @@ if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
         st.dataframe(hist.iloc[::-1], use_container_width=True)
+
