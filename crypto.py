@@ -6,7 +6,6 @@ import gspread
 import time
 from google.oauth2.service_account import Credentials
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime
 from textblob import TextBlob
 from datetime import datetime, timedelta
 
@@ -153,7 +152,9 @@ if st.session_state.bot_active:
                 run_auto_trade(result, sheet, total_bal, live_thb)
         
         # อัปเดต UI หลังจากสแกนครบทุกตัว
-        st.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {datetime.now().strftime('%H:%M:%S')} (กำลังรอรอบถัดไปใน 10 นาที)")
+        now_th = datetime.utcnow() + timedelta(hours=7)
+        now = now_th.strftime("%Y-%m-%d %H:%M:%S")
+        st.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {now} (กำลังรอรอบถัดไปใน 10 นาที)")
         
         # สั่งหยุดรอ 10 นาที (600 วินาที)
         time.sleep(600)
@@ -167,4 +168,5 @@ if sheet:
     hist = pd.DataFrame(sheet.get_all_records())
     if not hist.empty:
         st.dataframe(hist.iloc[::-1], use_container_width=True)
+
 
