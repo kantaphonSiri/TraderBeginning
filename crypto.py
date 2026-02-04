@@ -12,12 +12,11 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter - Always On", layout="wide")
+st.set_page_config(page_title="Pepper Hunter", layout="wide")
 
-# --- 2. Shared Global State (หัวใจสำคัญที่ทำให้เปิดมือถือแล้วไม่ต้อง Start ใหม่) ---
+# --- 2. Shared Global State ---
 @st.cache_resource
 def get_global_state():
-    # เก็บค่าไว้ที่ Server แชร์กันทุกเครื่องที่เข้าใช้งาน
     return {
         "bot_active": False,
         "last_scan": "ยังไม่มีการเริ่มงาน",
@@ -27,7 +26,7 @@ def get_global_state():
 
 global_state = get_global_state()
 
-# --- ฟังก์ชันสนับสนุน (เหมือนเดิมแต่ปรับจูนให้เสถียรขึ้น) ---
+# --- ฟังก์ชันสนับสนุน ---
 
 def get_blue_chip_list(max_price_thb=500):
     try:
@@ -115,40 +114,41 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             sheet.update_cell(int(idx)+2, 6, f"{p_pct:.2f}%"); sheet.update_cell(int(idx)+2, 8, round(new_bal, 2))
             st.toast(f"💰 ขาย {res['Symbol']}")
 
-# --- 3. UI Setup ---
+# --- 3. UI Setup & Data Prep ---
 sheet = init_gsheet()
 df_perf = pd.DataFrame()
-current_bal = 500.0
+sheet_bal = 0.0
 
-# ดึงข้อมูลจาก Sheet มาเตรียมไว้ก่อน
 if sheet:
     recs = sheet.get_all_records()
     if recs:
         df_perf = pd.DataFrame(recs)
-        current_bal = float(df_perf.iloc[-1]['Balance'])
+        sheet_bal = float(df_perf.iloc[-1]['Balance'])
 
 with st.sidebar:
     st.header("⚙️ ตั้งค่า Pepper")
-    # ใช้ค่าจาก Sheet เป็น Default อัตโนมัติ ไม่ต้องกรอกใหม่
-    user_capital = st.number_input("💰 ทุนปัจจุบัน (อ้างอิงจาก Sheet)", value=current_bal)
+    # หากใน Sheet มีค่า ให้ใช้เป็น Default แต่ถ้าไม่มีเลยค่อยใช้ 500
+    init_val = sheet_bal if sheet_bal > 0 else 500.0
+    user_capital = st.number_input("💰 ทุนที่ต้องการใช้ (บาท)", value=init_val, step=100.0)
     user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=1000.0, step=100.0)
     st.divider()
     if st.button("♻️ รีเฟรชข้อมูล (Sync)"): st.rerun()
 
+# หัวใจสำคัญ: ยึดค่าจาก Sidebar เป็นหลัก
+total_bal = user_capital
+
 st.title("🦔 Pepper Hunter")
 
-# ปุ่มควบคุมที่แชร์สถานะกันทุกเครื่อง
 c_b1, c_b2 = st.columns(2)
 if c_b1.button("▶️ เริ่มการทำงาน (Global Start)"):
     global_state["bot_active"] = True
 if c_b2.button("🛑 หยุดการทำงาน (Global Stop)"):
     global_state["bot_active"] = False
 
-# แสดงสถานะบอท
 if global_state["bot_active"]:
     st.success(f"🔥 สถานะ: บอทกำลังรันอยู่ที่ Server | สแกนรอบล่าสุด: {global_state['last_scan']}")
 else:
-    st.warning("💤 สถานะ: บอทหยุดการทำงาน (กด Start เพื่อเริ่ม)")
+    st.warning("💤 สถานะ: บอทหยุดการทำงาน")
 
 # --- 4. Dashboard Metrics ---
 locked_money = 0.0
@@ -156,19 +156,18 @@ if not df_perf.empty:
     locked_money = sum(df_perf[df_perf['สถานะ'] == 'HOLD']['Balance'].astype(float) * 0.20)
 
 m1, m2, m3 = st.columns(3)
-m1.metric("เงินสดใช้ได้", f"฿{current_bal - locked_money:,.2f}")
+m1.metric("เงินสดใช้ได้", f"฿{total_bal - locked_money:,.2f}")
 m2.metric("เงินที่ลงทุนอยู่", f"฿{locked_money:,.2f}")
-m3.metric("พอร์ตสุทธิ", f"฿{current_bal:,.2f}", delta=f"{current_bal - user_capital:,.2f}")
+m3.metric("พอร์ตสุทธิ (ตามที่กรอก)", f"฿{total_bal:,.2f}", delta=f"{total_bal - sheet_bal:,.2f}" if sheet_bal > 0 else None)
 
-st.progress(min((current_bal / user_target), 1.0))
+st.progress(min((total_bal / user_target), 1.0))
 
 # --- 5. Visualizations ---
 st.divider()
 col_g1, col_g2 = st.columns([1, 2])
 
 with col_g1:
-    st.subheader("🤖 AI Confidence")
-    # ดึงค่า Confidence ล่าสุดจาก Global State
+    st.subheader("🦔 Pepper Confidence")
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number", value = global_state["current_score"],
         gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
@@ -178,33 +177,32 @@ with col_g1:
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 with col_g2:
-    st.subheader("📈 Equity Curve")
+    st.subheader("📈 Equity Curve (จาก Sheet)")
     if not df_perf.empty:
         fig_line = px.line(df_perf, x=df_perf.index, y='Balance', template="plotly_dark")
         fig_line.update_traces(line_color='#00FFCC', line_width=3)
         st.plotly_chart(fig_line, use_container_width=True)
 
-# --- 6. Background Loop (The Eternal Hunter) ---
+# --- 6. Background Loop ---
 if global_state["bot_active"]:
-    watch_list = get_blue_chip_list(max_price_thb=user_capital)
+    watch_list = get_blue_chip_list(max_price_thb=total_bal)
     live_thb = get_live_thb_rate()
     
-    # ส่วนนี้จะรันเมื่อ Browser มีการเชื่อมต่อ (ถ้าเปิดคอมทิ้งไว้จะรัน 100% ถ้าเปิดมือถือดูเป็นระยะจะรันต่อเนื่อง)
     status_placeholder = st.empty()
     for ticker in watch_list:
         status_placeholder.write(f"⏳ Pepper กำลังส่อง: {ticker}...")
         res = analyze_coin_ai(ticker)
         if res:
-            # อัปเดตสถานะให้เครื่องอื่นๆ เห็น
             global_state["current_score"] = res['Score']
             global_state["current_ticker"] = res['Symbol']
-            run_auto_trade(res, sheet, current_bal, live_thb)
-        time.sleep(2) # Anti-Ban Delay
+            # บอทจะใช้ total_bal ที่พี่กรอกล่าสุดในการรัน
+            run_auto_trade(res, sheet, total_bal, live_thb)
+        time.sleep(2)
     
     global_state["last_scan"] = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
     status_placeholder.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {global_state['last_scan']}")
     
-    time.sleep(600) # รอ 10 นาทีเพื่อสแกนใหม่
+    time.sleep(600)
     st.rerun()
 
 st.divider()
