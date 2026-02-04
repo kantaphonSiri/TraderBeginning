@@ -12,7 +12,7 @@ from textblob import TextBlob
 from datetime import datetime, timedelta, timezone
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter - Pro", layout="wide")
+st.set_page_config(page_title="Pepper Hunter - Pro Visuals", layout="wide")
 
 # --- 2. Shared Global State ---
 @st.cache_resource
@@ -42,7 +42,6 @@ def init_gsheet(sheet_name="trade_learning"):
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-        # เชื่อมต่อไฟล์ "Blue-chip Bet" และแท็บ "trade_learning" ตามรูปที่ 3
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet(sheet_name)
     except Exception as e:
         st.error(f"❌ เชื่อมต่อ Sheet ไม่ได้: {e}")
@@ -82,17 +81,14 @@ def analyze_coin_ai(symbol, df_history):
 def run_auto_trade(res, sheet, total_balance, live_rate):
     if not sheet: return
     try:
-        # 🛡️ แก้ไขจุดที่ทำให้เกิด API Error
         data = sheet.get_all_records()
         df_trade = pd.DataFrame(data)
-        
         is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')) if not df_trade.empty else False
-        price_thb = res['Price_USD'] * live_rate
+        price_thb = float(res['Price_USD'] * live_rate)
         now_th = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7))).strftime("%H:%M:%S %d-%m-%Y")
 
         if res['Score'] >= 80 and not is_holding and len(df_trade[df_trade['สถานะ'] == 'HOLD']) < 3:
             inv = total_balance * 0.20
-            # บันทึกตามลำดับ Column A-J ในรูปที่ 3
             row = [now_th, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, res['Score'], round(total_balance, 2), round(inv/price_thb, 6), res['Headline']]
             sheet.append_row(row)
             st.toast(f"🚀 ซื้อ {res['Symbol']}")
@@ -109,7 +105,7 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
                 sheet.update_cell(int(idx)+2, 8, round(new_bal, 2))
                 st.toast(f"💰 ขาย {res['Symbol']}")
     except Exception as e:
-        st.warning(f"⚠️ พักการเขียน Sheet ชั่วคราว (API Busy): {e}")
+        st.warning(f"⚠️ API Error: {e}")
 
 # --- 4. UI Setup ---
 sheet = init_gsheet()
@@ -126,75 +122,87 @@ if sheet:
 
 with st.sidebar:
     st.header("⚙️ ตั้งค่า Pepper")
-    user_capital = st.number_input("💰 ทุนที่ต้องการใช้ (บาท)", value=sheet_bal if sheet_bal > 0 else 1000.0)
-    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=10000.0)
-    if st.button("♻️ รีเฟรชข้อมูล (Sync)"): st.rerun()
+    user_capital = st.number_input("💰 ทุนที่ใช้ (บาท)", value=sheet_bal if sheet_bal > 0 else 1000.0)
+    if st.button("♻️ Sync Data"): st.rerun()
 
 st.title("🦔 Pepper Hunter")
 
 c1, c2 = st.columns(2)
-if c1.button("▶️ Global Start"): global_state["bot_active"] = True
-if c2.button("🛑 Global Stop"): global_state["bot_active"] = False
+if c1.button("▶️ Global Start", width=400): global_state["bot_active"] = True
+if c2.button("🛑 Global Stop", width=400): global_state["bot_active"] = False
 
-if global_state["bot_active"]:
-    st.success(f"🔥 บอทรันอยู่ | รอบล่าสุด: {global_state['last_scan']}")
-else:
-    st.warning("💤 บอทปิดอยู่")
+# --- 5. VISUALS ARE BACK! ---
+col_v1, col_v2 = st.columns([1, 2])
 
-# Metrics
+with col_v1:
+    st.subheader("🎯 AI Confidence")
+    # หน้าปัดแสดงค่าความมั่นใจล่าสุด
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=global_state["current_score"],
+        title={'text': f"Ticker: {global_state['current_ticker']}"},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "#00FFCC"},
+            'steps': [
+                {'range': [0, 50], 'color': "#333"},
+                {'range': [50, 80], 'color': "#555"},
+                {'range': [80, 100], 'color': "#111"}
+            ],
+            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 80}
+        }
+    ))
+    fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+    st.plotly_chart(fig_gauge, width='stretch')
+
+with col_v2:
+    st.subheader("📈 Equity Curve")
+    if not df_perf.empty:
+        # กราฟแสดงการเติบโตของเงินทุน
+        fig_line = px.line(df_perf, y='Balance', title="Portfolio Growth", template="plotly_dark")
+        fig_line.update_traces(line_color='#00FFCC', line_width=3)
+        fig_line.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_line, width='stretch')
+    else:
+        st.info("รอดึงข้อมูลจาก Sheet เพื่อวาดกราฟ...")
+
+# --- Metrics Summary ---
 m1, m2, m3 = st.columns(3)
-m1.metric("เงินสด", f"฿{user_capital:,.2f}")
-m2.metric("สถานะ AI", f"{global_state['current_ticker']}")
-m3.metric("ความมั่นใจ", f"{global_state['current_score']}%")
+m1.metric("Current Balance", f"฿{user_capital:,.2f}")
+m2.metric("Last Action", global_state["current_ticker"])
+m3.metric("Last Scan", global_state["last_scan"])
 
-# --- 5. Loop ---
+# --- 6. Loop ---
 if global_state["bot_active"]:
     try:
         tickers = get_top_30_tickers()
-        # ดึงข้อมูล Batch
         raw_data = yf.download(tickers, period="60d", interval="1h", progress=False, group_by='ticker')
-        
-        # ดึงค่าเงินบาทแบบปลอดภัย
         df_thb = yf.download("THB=X", period="1d", interval="1m", progress=False)
         live_rate = float(df_thb['Close'].iloc[-1]) if not df_thb.empty else 35.5
         
         status_box = st.empty()
         for t in tickers:
-            status_box.info(f"🧠 กำลังวิเคราะห์: {t}")
+            status_box.info(f"🧠 Pepper กำลังส่อง: {t}")
             
-            # ป้องกัน Error ถ้าไม่มีข้อมูลเหรียญนั้นๆ
-            if t not in raw_data.columns.get_level_values(0):
-                continue
-                
+            if t not in raw_data.columns.get_level_values(0): continue
             t_df = raw_data[t].copy().dropna()
-            
-            # เช็คว่ามีข้อมูลพอวิเคราะห์ไหม
-            if len(t_df) < 30:
-                continue
+            if len(t_df) < 30: continue
                 
             res = analyze_coin_ai(t, t_df)
-            
             if res:
                 global_state["current_score"] = res['Score']
                 global_state["current_ticker"] = res['Symbol']
-                
-                # มั่นใจว่าเป็นตัวเลขเดี่ยวๆ ก่อนเปรียบเทียบ
-                current_price_thb = float(res['Price_USD']) * live_rate
-                budget = float(user_capital)
-                
-                if current_price_thb <= budget:
-                    run_auto_trade(res, sheet, budget, live_rate)
-            
+                # อัปเดต UI ทันทีในระหว่างลูป
+                if res['Price_USD'] * live_rate <= user_capital:
+                    run_auto_trade(res, sheet, user_capital, live_rate)
             time.sleep(1)
             
         global_state["last_scan"] = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
         st.rerun()
     except Exception as e:
-        st.error(f"⚠️ พบข้อผิดพลาด: {e}")
+        st.error(f"⚠️ Loop Error: {e}")
         time.sleep(30); st.rerun()
 
+st.divider()
 if not df_perf.empty:
-    st.divider()
-    st.subheader("📚 ประวัติการเทรด")
     st.dataframe(df_perf.iloc[::-1], width='stretch')
-
