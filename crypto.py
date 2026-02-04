@@ -12,7 +12,7 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter - Always On", layout="wide")
+st.set_page_config(page_title="Pepper Hunter - Anti-Ban Mode", layout="wide")
 
 # --- 2. Shared Global State ---
 @st.cache_resource
@@ -22,22 +22,21 @@ def get_global_state():
         "last_scan": "รอกระบวนการสแกนรอบแรก...",
         "current_score": 0,
         "current_ticker": "N/A",
-        "status_msg": "พร้อมทำงาน",
-        "top_picks": [] # เก็บรายการที่ผ่านเกณฑ์ไว้โชว์
+        "status_msg": "พร้อมทำงาน"
     }
 
 global_state = get_global_state()
 
-# --- ฟังก์ชันสนับสนุน ---
+# --- ฟังก์ชันสนับสนุน (ปรับปรุงเพื่อลด Request) ---
 
 def get_top_30_tickers():
-    # รายการเหรียญ Top 30 ตาม Market Cap (โดยประมาณ) เพื่อความกว้างของข้อมูล
     return [
         "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "DOT-USD", "LINK-USD", "AVAX-USD",
         "MATIC-USD", "TRX-USD", "SHIB-USD", "LTC-USD", "BCH-USD", "UNI-USD", "NEAR-USD", "LEO-USD", "APT-USD", "DAI-USD",
         "STX-USD", "FIL-USD", "ARB-USD", "KAS-USD", "ETC-USD", "IMX-USD", "FTM-USD", "RNDR-USD", "SUI-USD", "OP-USD"
     ]
 
+@st.cache_data(ttl=60) # ดึงค่าเงินบาทแค่ครั้งเดียวต่อนาที
 def get_live_thb_rate():
     try:
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
@@ -65,12 +64,11 @@ def init_gsheet(sheet_name="trade_learning"):
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet(sheet_name)
     except: return None
 
-@st.cache_data(ttl=300) # ลด Cache ลงเพื่อให้วิเคราะห์สดขึ้น
-def analyze_coin_ai(symbol):
+# ปรับปรุง: แยกการดึงข้อมูลออกจาก Logic การคำนวณ เพื่อทำ Batching
+def analyze_coin_ai(symbol, df_history):
     try:
-        df = yf.download(symbol, period="60d", interval="1h", progress=False)
-        if df.empty or len(df) < 30: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        if df_history.empty or len(df_history) < 30: return None
+        df = df_history.copy()
         df.ta.rsi(length=14, append=True); df.ta.ema(length=20, append=True); df.ta.ema(length=50, append=True)
         df = df.dropna()
         X, y = df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[:-1], df['Close'].shift(-1).iloc[:-1]
@@ -135,15 +133,14 @@ st.title("🦔 Pepper Hunter")
 c_b1, c_b2 = st.columns(2)
 if c_b1.button("▶️ เริ่มการทำงาน (Global Start)"):
     global_state["bot_active"] = True
-    global_state["status_msg"] = "กำลังเริ่มกระบวนการวิเคราะห์ Top 30..."
+    global_state["status_msg"] = "กำลังดึงข้อมูลแบบกลุ่ม (Batch Download)..."
 if c_b2.button("🛑 หยุดการทำงาน (Global Stop)"):
     global_state["bot_active"] = False
-    global_state["status_msg"] = "บอทถูกหยุดการทำงาน"
 
 if global_state["bot_active"]:
     st.success(f"🔥 สถานะ: {global_state['status_msg']} | รอบล่าสุด: {global_state['last_scan']}")
 else:
-    st.warning(f"💤 สถานะ: {global_state['status_msg']}")
+    st.warning("💤 บอทปิดอยู่")
 
 # --- 4. Dashboard Metrics ---
 locked_money = 0.0
@@ -158,50 +155,56 @@ m3.metric("พอร์ตสุทธิ", f"฿{total_bal:,.2f}", delta=f"{tot
 # --- 5. Visualizations ---
 st.divider()
 col_g1, col_g2 = st.columns([1, 2])
-
 with col_g1:
     st.subheader("🦔 Pepper Confidence")
-    fig_gauge = go.Figure(go.Indicator(
-        mode = "gauge+number", value = global_state["current_score"],
-        gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
-        title = {'text': f"LATEST: {global_state['current_ticker']}"}
-    ))
-    fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
+    fig_gauge = go.Figure(go.Indicator(mode="gauge+number", value=global_state["current_score"],
+        gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
+        title={'text': f"LATEST: {global_state['current_ticker']}"}))
     st.plotly_chart(fig_gauge, use_container_width=True)
-
 with col_g2:
-    st.subheader("📉 Equity Curve")
+    st.subheader("📈 Equity Curve")
     if not df_perf.empty:
         fig_line = px.line(df_perf, x=df_perf.index, y='Balance', template="plotly_dark")
         fig_line.update_traces(line_color='#00FFCC', line_width=3)
         st.plotly_chart(fig_line, use_container_width=True)
 
-# --- 6. Background Loop (Top 30 Strategy) ---
+# --- 6. Background Loop (Optimized Anti-Ban) ---
 if global_state["bot_active"]:
     live_thb = get_live_thb_rate()
     all_tickers = get_top_30_tickers()
     
+    # 🌟 เทคนิค Anti-Ban: ดึงข้อมูลทีเดียว 30 ตัว (1 Request เท่านั้น!)
     status_placeholder = st.empty()
-    for ticker in all_tickers:
-        status_placeholder.write(f"🔍 กำลังวิเคราะห์เหรียญที่ {all_tickers.index(ticker)+1}/30: {ticker}")
-        res = analyze_coin_ai(ticker)
-        
-        if res:
-            # เก็บค่าล่าสุดไว้ใน Global เสมอแม้จะยังไม่กรองงบ เพื่อให้ Confidence ไม่เป็น 0
-            global_state["current_score"] = res['Score']
-            global_state["current_ticker"] = res['Symbol']
-            
-            # กรองงบ: ถ้าผ่านเกณฑ์ Confidence และ ราคาอยู่ในงบ Pepper
-            if res['Price_USD'] * live_thb <= total_bal:
-                run_auto_trade(res, sheet, total_bal, live_thb)
-                
-        time.sleep(0.5) # ปรับให้สแกนเร็วขึ้น
+    status_placeholder.write("📡 กำลังดึงข้อมูลตลาด 30 ตัวล่าสุด (Batch Request)...")
     
-    global_state["last_scan"] = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
-    global_state["status_msg"] = "สแกน Top 30 ครบแล้ว กำลังรอรอบถัดไป"
-    st.rerun()
+    try:
+        # ดึงข้อมูล Close price ของทุกตัวย้อนหลัง 60 วันในครั้งเดียว
+        full_data = yf.download(all_tickers, period="60d", interval="1h", progress=False)['Close']
+        
+        for ticker in all_tickers:
+            status_placeholder.write(f"🧠 Pepper กำลังวิเคราะห์ AI: {ticker}")
+            
+            # ดึงเฉพาะข้อมูลของตัวนั้นๆ จากก้อนใหญ่ที่เราดึงมาแล้ว (ไม่ต้อง Call Yahoo ซ้ำ)
+            ticker_data = full_data[ticker].to_frame().rename(columns={ticker: 'Close'})
+            
+            res = analyze_coin_ai(ticker, ticker_data)
+            if res:
+                global_state["current_score"] = res['Score']
+                global_state["current_ticker"] = res['Symbol']
+                if res['Price_USD'] * live_thb <= total_bal:
+                    run_auto_trade(res, sheet, total_bal, live_thb)
+            
+            time.sleep(1) # ให้เวลา Google Sheet อัปเดตเล็กน้อย
+            
+        global_state["last_scan"] = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
+        global_state["status_msg"] = "สแกนครบ 30 ตัวแล้ว พักเครื่อง 10 นาที"
+        time.sleep(600)
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error: {e}")
+        time.sleep(60)
+        st.rerun()
 
 st.divider()
-st.subheader("📚 ประวัติการเทรดล่าสุด")
-if not df_perf.empty:
-    st.dataframe(df_perf.iloc[::-1], use_container_width=True)
+if not df_perf.empty: st.dataframe(df_perf.iloc[::-1], use_container_width=True)
