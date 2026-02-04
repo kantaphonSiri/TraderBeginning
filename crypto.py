@@ -12,9 +12,22 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide")
+st.set_page_config(page_title="Pepper Hunter - Always On", layout="wide")
 
-# --- [ฟังก์ชัน 2-7 เหมือนเดิมที่พี่มี แต่แนะนำให้คงไว้ตามนี้เพื่อความเสถียร] ---
+# --- 2. Shared Global State (หัวใจสำคัญที่ทำให้เปิดมือถือแล้วไม่ต้อง Start ใหม่) ---
+@st.cache_resource
+def get_global_state():
+    # เก็บค่าไว้ที่ Server แชร์กันทุกเครื่องที่เข้าใช้งาน
+    return {
+        "bot_active": False,
+        "last_scan": "ยังไม่มีการเริ่มงาน",
+        "current_score": 0,
+        "current_ticker": "N/A"
+    }
+
+global_state = get_global_state()
+
+# --- ฟังก์ชันสนับสนุน (เหมือนเดิมแต่ปรับจูนให้เสถียรขึ้น) ---
 
 def get_blue_chip_list(max_price_thb=500):
     try:
@@ -86,6 +99,7 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
     is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')) if not df_trade.empty else False
     current_count = len(df_trade[df_trade['สถานะ'] == 'HOLD']) if not df_trade.empty else 0
     price_thb = res['Price_USD'] * live_rate
+    
     if res['Score'] >= 80 and not is_holding and current_count < 3:
         inv = total_balance * 0.20
         row = [(datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S %d-%m-%Y"), res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, res['Score'], round(total_balance, 2), round(inv/price_thb, 6), res['Headline']]
@@ -101,58 +115,67 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             sheet.update_cell(int(idx)+2, 6, f"{p_pct:.2f}%"); sheet.update_cell(int(idx)+2, 8, round(new_bal, 2))
             st.toast(f"💰 ขาย {res['Symbol']}")
 
-# --- 8. UI & Sidebar ---
-with st.sidebar:
-    st.header("⚙️ ตั้งค่า Pepper")
-    user_capital = st.number_input("💰 ทุนเริ่มต้น (บาท)", value=500.0, step=100.0)
-    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=1000.0, step=100.0)
-    if st.button("♻️ รีเฟรชหน้าจอ"): st.rerun()
-
-st.title("🦔 Pepper Hunter")
-
-if "bot_active" not in st.session_state: st.session_state.bot_active = False
-c_b1, c_b2 = st.columns(2)
-if c_b1.button("▶️ Start Bot"): st.session_state.bot_active = True
-if c_b2.button("🛑 Stop Bot"): st.session_state.bot_active = False
-
+# --- 3. UI Setup ---
 sheet = init_gsheet()
-live_thb = get_live_thb_rate()
-watch_list = get_blue_chip_list(max_price_thb=user_capital)
-
-# --- 9. Visualizations & Metrics ---
-total_bal, locked_money = user_capital, 0.0
 df_perf = pd.DataFrame()
+current_bal = 500.0
 
+# ดึงข้อมูลจาก Sheet มาเตรียมไว้ก่อน
 if sheet:
     recs = sheet.get_all_records()
     if recs:
         df_perf = pd.DataFrame(recs)
-        total_bal = float(df_perf.iloc[-1]['Balance'])
-        locked_money = sum(df_perf[df_perf['สถานะ'] == 'HOLD']['Balance'].astype(float) * 0.20)
+        current_bal = float(df_perf.iloc[-1]['Balance'])
+
+with st.sidebar:
+    st.header("⚙️ ตั้งค่า Pepper")
+    # ใช้ค่าจาก Sheet เป็น Default อัตโนมัติ ไม่ต้องกรอกใหม่
+    user_capital = st.number_input("💰 ทุนปัจจุบัน (อ้างอิงจาก Sheet)", value=current_bal)
+    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=1000.0, step=100.0)
+    st.divider()
+    if st.button("♻️ รีเฟรชข้อมูล (Sync)"): st.rerun()
+
+st.title("🦔 Pepper Hunter")
+
+# ปุ่มควบคุมที่แชร์สถานะกันทุกเครื่อง
+c_b1, c_b2 = st.columns(2)
+if c_b1.button("▶️ เริ่มการทำงาน (Global Start)"):
+    global_state["bot_active"] = True
+if c_b2.button("🛑 หยุดการทำงาน (Global Stop)"):
+    global_state["bot_active"] = False
+
+# แสดงสถานะบอท
+if global_state["bot_active"]:
+    st.success(f"🔥 สถานะ: บอทกำลังรันอยู่ที่ Server | สแกนรอบล่าสุด: {global_state['last_scan']}")
+else:
+    st.warning("💤 สถานะ: บอทหยุดการทำงาน (กด Start เพื่อเริ่ม)")
+
+# --- 4. Dashboard Metrics ---
+locked_money = 0.0
+if not df_perf.empty:
+    locked_money = sum(df_perf[df_perf['สถานะ'] == 'HOLD']['Balance'].astype(float) * 0.20)
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Cash", f"฿{total_bal - locked_money:,.2f}")
-m2.metric("In Trade", f"฿{locked_money:,.2f}")
-m3.metric("Equity", f"฿{total_bal:,.2f}", delta=f"{total_bal - user_capital:,.2f}")
+m1.metric("เงินสดใช้ได้", f"฿{current_bal - locked_money:,.2f}")
+m2.metric("เงินที่ลงทุนอยู่", f"฿{locked_money:,.2f}")
+m3.metric("พอร์ตสุทธิ", f"฿{current_bal:,.2f}", delta=f"{current_bal - user_capital:,.2f}")
 
-st.progress(min((total_bal / user_target), 1.0))
+st.progress(min((current_bal / user_target), 1.0))
 
-# --- กราฟวิเคราะห์ความมั่นใจ (Confidence & Equity) ---
+# --- 5. Visualizations ---
 st.divider()
 col_g1, col_g2 = st.columns([1, 2])
 
 with col_g1:
-    st.subheader("🦔 Pepper Confidence")
-    # แสดงมาตรวัดความมั่นใจล่าสุด (ถ้าบอทรันอยู่)
-    if st.session_state.bot_active:
-        # สมมติเอาค่าเฉลี่ยความมั่นใจในพอร์ตหรือตัวล่าสุดมาโชว์
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number", value = 80, # Placeholder
-            gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
-            title = {'text': "Confidence Level"}
-        ))
-        fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig_gauge, use_container_width=True)
+    st.subheader("🤖 AI Confidence")
+    # ดึงค่า Confidence ล่าสุดจาก Global State
+    fig_gauge = go.Figure(go.Indicator(
+        mode = "gauge+number", value = global_state["current_score"],
+        gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
+        title = {'text': f"Confidence: {global_state['current_ticker']}"}
+    ))
+    fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
 with col_g2:
     st.subheader("📈 Equity Curve")
@@ -161,21 +184,30 @@ with col_g2:
         fig_line.update_traces(line_color='#00FFCC', line_width=3)
         st.plotly_chart(fig_line, use_container_width=True)
 
-# --- 10. Background Loop ---
-if st.session_state.bot_active:
-    st.success("🔥 Pepper Is Hunting...")
-    while st.session_state.bot_active:
-        for ticker in watch_list:
-            res = analyze_coin_ai(ticker)
-            if res:
-                run_auto_trade(res, sheet, total_bal, live_thb)
-                # โชว์ความมั่นใจเรียลไทม์บนหน้าจอ
-                st.toast(f"Analyzing {ticker}: Confidence {res['Score']}%")
-            time.sleep(2)
-        time.sleep(600)
-        st.rerun()
+# --- 6. Background Loop (The Eternal Hunter) ---
+if global_state["bot_active"]:
+    watch_list = get_blue_chip_list(max_price_thb=user_capital)
+    live_thb = get_live_thb_rate()
+    
+    # ส่วนนี้จะรันเมื่อ Browser มีการเชื่อมต่อ (ถ้าเปิดคอมทิ้งไว้จะรัน 100% ถ้าเปิดมือถือดูเป็นระยะจะรันต่อเนื่อง)
+    status_placeholder = st.empty()
+    for ticker in watch_list:
+        status_placeholder.write(f"⏳ Pepper กำลังส่อง: {ticker}...")
+        res = analyze_coin_ai(ticker)
+        if res:
+            # อัปเดตสถานะให้เครื่องอื่นๆ เห็น
+            global_state["current_score"] = res['Score']
+            global_state["current_ticker"] = res['Symbol']
+            run_auto_trade(res, sheet, current_bal, live_thb)
+        time.sleep(2) # Anti-Ban Delay
+    
+    global_state["last_scan"] = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
+    status_placeholder.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {global_state['last_scan']}")
+    
+    time.sleep(600) # รอ 10 นาทีเพื่อสแกนใหม่
+    st.rerun()
 
 st.divider()
-st.subheader("📚 Trade History")
-if not df_perf.empty: st.dataframe(df_perf.iloc[::-1], use_container_width=True)
-
+st.subheader("📚 ประวัติการเทรดล่าสุด")
+if not df_perf.empty:
+    st.dataframe(df_perf.iloc[::-1], use_container_width=True)
