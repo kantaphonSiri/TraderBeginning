@@ -12,7 +12,7 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter - Dashboard", layout="wide")
+st.set_page_config(page_title="Pepper Hunter", layout="wide")
 
 # --- [ฟังก์ชัน 2-7 เหมือนเดิมที่พี่มี แต่แนะนำให้คงไว้ตามนี้เพื่อความเสถียร] ---
 
@@ -178,3 +178,4 @@ if st.session_state.bot_active:
 st.divider()
 st.subheader("📚 Trade History")
 if not df_perf.empty: st.dataframe(df_perf.iloc[::-1], use_container_width=True)
+
