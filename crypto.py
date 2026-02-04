@@ -12,7 +12,7 @@ from textblob import TextBlob
 from datetime import datetime, timedelta, timezone
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter - Pro Visuals", layout="wide")
+st.set_page_config(page_title="Pepper Hunter - Full Dashboard", layout="wide")
 
 # --- 2. Shared Global State ---
 @st.cache_resource
@@ -47,15 +47,6 @@ def init_gsheet(sheet_name="trade_learning"):
         st.error(f"❌ เชื่อมต่อ Sheet ไม่ได้: {e}")
         return None
 
-def get_news_data(symbol):
-    try:
-        ticker = yf.Ticker(symbol)
-        news = ticker.news
-        if not news: return 0, "ไม่มีข่าวใหม่"
-        sentiment = sum(TextBlob(n['title']).sentiment.polarity for n in news[:3]) / 3
-        return sentiment, news[0]['title']
-    except: return 0, "ดึงข่าวไม่ได้"
-
 def analyze_coin_ai(symbol, df_history):
     try:
         df = df_history.copy()
@@ -73,7 +64,15 @@ def analyze_coin_ai(symbol, df_history):
         if cur_p > df.iloc[-1]['EMA_20'] > df.iloc[-1]['EMA_50']: score += 40
         if 40 < df.iloc[-1]['RSI_14'] < 65: score += 30
         if pred_p > cur_p: score += 30
-        sent, head = get_news_data(symbol)
+        
+        # ดึงข่าวสั้นๆ
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+        sent, head = (0, "ไม่มีข่าว")
+        if news:
+            sent = sum(TextBlob(n['title']).sentiment.polarity for n in news[:3]) / 3
+            head = news[0]['title']
+        
         score += 10 if sent > 0.1 else -20 if sent < -0.1 else 0
         return {"Symbol": symbol, "Price_USD": cur_p, "Score": max(0, min(100, score)), "Headline": head}
     except: return None
@@ -122,57 +121,58 @@ if sheet:
 
 with st.sidebar:
     st.header("⚙️ ตั้งค่า Pepper")
-    user_capital = st.number_input("💰 ทุนที่ใช้ (บาท)", value=sheet_bal if sheet_bal > 0 else 1000.0)
+    user_capital = st.number_input("💰 ทุนเริ่มต้น (บาท)", value=sheet_bal if sheet_bal > 0 else 1000.0)
+    # 🔥 คืนชีพเป้าหมายกำไร
+    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=10000.0, step=1000.0)
+    st.divider()
     if st.button("♻️ Sync Data"): st.rerun()
 
 st.title("🦔 Pepper Hunter")
 
-c1, c2 = st.columns(2)
-if c1.button("▶️ Global Start", width=400): global_state["bot_active"] = True
-if c2.button("🛑 Global Stop", width=400): global_state["bot_active"] = False
+# 🔥 Progress Bar แสดงความคืบหน้าสู่เป้าหมาย
+profit_pct = min(100, int((user_capital / user_target) * 100)) if user_target > 0 else 0
+st.write(f"📈 ความคืบหน้าสู่เป้าหมาย: {user_capital:,.2f} / {user_target:,.2f} บาท")
+st.progress(profit_pct / 100)
 
-# --- 5. VISUALS ARE BACK! ---
+c1, c2 = st.columns(2)
+if c1.button("▶️ Global Start", use_container_width=True): global_state["bot_active"] = True
+if c2.button("🛑 Global Stop", use_container_width=True): global_state["bot_active"] = False
+
+# --- 5. Visuals ---
 col_v1, col_v2 = st.columns([1, 2])
 
 with col_v1:
-    st.subheader("🎯 AI Confidence")
-    # หน้าปัดแสดงค่าความมั่นใจล่าสุด
+    st.subheader("🦔 Pepper Confidence")
     fig_gauge = go.Figure(go.Indicator(
         mode="gauge+number",
         value=global_state["current_score"],
-        title={'text': f"Ticker: {global_state['current_ticker']}"},
+        title={'text': f"Scanning: {global_state['current_ticker']}"},
         gauge={
             'axis': {'range': [0, 100]},
             'bar': {'color': "#00FFCC"},
-            'steps': [
-                {'range': [0, 50], 'color': "#333"},
-                {'range': [50, 80], 'color': "#555"},
-                {'range': [80, 100], 'color': "#111"}
-            ],
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 80}
         }
     ))
-    fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
-    st.plotly_chart(fig_gauge, width='stretch')
+    fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
 with col_v2:
     st.subheader("📈 Equity Curve")
     if not df_perf.empty:
-        # กราฟแสดงการเติบโตของเงินทุน
         fig_line = px.line(df_perf, y='Balance', title="Portfolio Growth", template="plotly_dark")
         fig_line.update_traces(line_color='#00FFCC', line_width=3)
-        fig_line.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_line, width='stretch')
+        fig_line.update_layout(height=280, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_line, use_container_width=True)
     else:
-        st.info("รอดึงข้อมูลจาก Sheet เพื่อวาดกราฟ...")
+        st.info("รอข้อมูลประวัติการเทรด...")
 
-# --- Metrics Summary ---
+# --- Metrics ---
 m1, m2, m3 = st.columns(3)
 m1.metric("Current Balance", f"฿{user_capital:,.2f}")
-m2.metric("Last Action", global_state["current_ticker"])
+m2.metric("Target", f"฿{user_target:,.2f}")
 m3.metric("Last Scan", global_state["last_scan"])
 
-# --- 6. Loop ---
+# --- 6. Background Loop ---
 if global_state["bot_active"]:
     try:
         tickers = get_top_30_tickers()
@@ -182,8 +182,7 @@ if global_state["bot_active"]:
         
         status_box = st.empty()
         for t in tickers:
-            status_box.info(f"🧠 Pepper กำลังส่อง: {t}")
-            
+            status_box.info(f"🧠 Pepper กำลังวิเคราะห์: {t}")
             if t not in raw_data.columns.get_level_values(0): continue
             t_df = raw_data[t].copy().dropna()
             if len(t_df) < 30: continue
@@ -192,7 +191,6 @@ if global_state["bot_active"]:
             if res:
                 global_state["current_score"] = res['Score']
                 global_state["current_ticker"] = res['Symbol']
-                # อัปเดต UI ทันทีในระหว่างลูป
                 if res['Price_USD'] * live_rate <= user_capital:
                     run_auto_trade(res, sheet, user_capital, live_rate)
             time.sleep(1)
@@ -205,4 +203,5 @@ if global_state["bot_active"]:
 
 st.divider()
 if not df_perf.empty:
-    st.dataframe(df_perf.iloc[::-1], width='stretch')
+    st.subheader("📚 ประวัติการเทรดล่าสุด")
+    st.dataframe(df_perf.iloc[::-1], use_container_width=True)
