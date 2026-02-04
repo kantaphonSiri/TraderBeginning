@@ -151,29 +151,50 @@ m3.metric("ความมั่นใจ", f"{global_state['current_score']}%")
 if global_state["bot_active"]:
     try:
         tickers = get_top_30_tickers()
-        # 🛡️ Anti-Ban Batch Download
+        # ดึงข้อมูล Batch
         raw_data = yf.download(tickers, period="60d", interval="1h", progress=False, group_by='ticker')
-        live_rate = yf.download("THB=X", period="1d", interval="1m", progress=False)['Close'].iloc[-1]
+        
+        # ดึงค่าเงินบาทแบบปลอดภัย
+        df_thb = yf.download("THB=X", period="1d", interval="1m", progress=False)
+        live_rate = float(df_thb['Close'].iloc[-1]) if not df_thb.empty else 35.5
         
         status_box = st.empty()
         for t in tickers:
             status_box.info(f"🧠 กำลังวิเคราะห์: {t}")
+            
+            # ป้องกัน Error ถ้าไม่มีข้อมูลเหรียญนั้นๆ
+            if t not in raw_data.columns.get_level_values(0):
+                continue
+                
             t_df = raw_data[t].copy().dropna()
+            
+            # เช็คว่ามีข้อมูลพอวิเคราะห์ไหม
+            if len(t_df) < 30:
+                continue
+                
             res = analyze_coin_ai(t, t_df)
+            
             if res:
                 global_state["current_score"] = res['Score']
                 global_state["current_ticker"] = res['Symbol']
-                if res['Price_USD'] * live_rate <= user_capital:
-                    run_auto_trade(res, sheet, user_capital, live_rate)
+                
+                # มั่นใจว่าเป็นตัวเลขเดี่ยวๆ ก่อนเปรียบเทียบ
+                current_price_thb = float(res['Price_USD']) * live_rate
+                budget = float(user_capital)
+                
+                if current_price_thb <= budget:
+                    run_auto_trade(res, sheet, budget, live_rate)
+            
             time.sleep(1)
             
         global_state["last_scan"] = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
         st.rerun()
     except Exception as e:
-        st.error(f"Error: {e}")
-        time.sleep(60); st.rerun()
+        st.error(f"⚠️ พบข้อผิดพลาด: {e}")
+        time.sleep(30); st.rerun()
 
 if not df_perf.empty:
     st.divider()
     st.subheader("📚 ประวัติการเทรด")
     st.dataframe(df_perf.iloc[::-1], width='stretch')
+
