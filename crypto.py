@@ -12,35 +12,31 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide")
+st.set_page_config(page_title="Pepper Hunter - Always On", layout="wide")
 
 # --- 2. Shared Global State ---
 @st.cache_resource
 def get_global_state():
     return {
         "bot_active": False,
-        "last_scan": "ยังไม่มีการเริ่มงาน",
+        "last_scan": "รอกระบวนการสแกนรอบแรก...",
         "current_score": 0,
-        "current_ticker": "N/A"
+        "current_ticker": "N/A",
+        "status_msg": "พร้อมทำงาน",
+        "top_picks": [] # เก็บรายการที่ผ่านเกณฑ์ไว้โชว์
     }
 
 global_state = get_global_state()
 
 # --- ฟังก์ชันสนับสนุน ---
 
-def get_blue_chip_list(max_price_thb=500):
-    try:
-        seed_tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "DOT-USD", "LINK-USD", "AVAX-USD"]
-        data = yf.download(seed_tickers, period="1d", interval="1m", progress=False)['Close']
-        live_rate = get_live_thb_rate()
-        budget_friendly_list = []
-        for ticker in seed_tickers:
-            if ticker in data.columns:
-                price_thb = data[ticker].iloc[-1] * live_rate
-                if price_thb <= max_price_thb:
-                    budget_friendly_list.append(ticker)
-        return budget_friendly_list
-    except: return ["XRP-USD", "ADA-USD", "DOGE-USD"]
+def get_top_30_tickers():
+    # รายการเหรียญ Top 30 ตาม Market Cap (โดยประมาณ) เพื่อความกว้างของข้อมูล
+    return [
+        "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "DOT-USD", "LINK-USD", "AVAX-USD",
+        "MATIC-USD", "TRX-USD", "SHIB-USD", "LTC-USD", "BCH-USD", "UNI-USD", "NEAR-USD", "LEO-USD", "APT-USD", "DAI-USD",
+        "STX-USD", "FIL-USD", "ARB-USD", "KAS-USD", "ETC-USD", "IMX-USD", "FTM-USD", "RNDR-USD", "SUI-USD", "OP-USD"
+    ]
 
 def get_live_thb_rate():
     try:
@@ -69,7 +65,7 @@ def init_gsheet(sheet_name="trade_learning"):
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet(sheet_name)
     except: return None
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300) # ลด Cache ลงเพื่อให้วิเคราะห์สดขึ้น
 def analyze_coin_ai(symbol):
     try:
         df = yf.download(symbol, period="60d", interval="1h", progress=False)
@@ -114,7 +110,7 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             sheet.update_cell(int(idx)+2, 6, f"{p_pct:.2f}%"); sheet.update_cell(int(idx)+2, 8, round(new_bal, 2))
             st.toast(f"💰 ขาย {res['Symbol']}")
 
-# --- 3. UI Setup & Data Prep ---
+# --- 3. UI Setup ---
 sheet = init_gsheet()
 df_perf = pd.DataFrame()
 sheet_bal = 0.0
@@ -127,28 +123,27 @@ if sheet:
 
 with st.sidebar:
     st.header("⚙️ ตั้งค่า Pepper")
-    # หากใน Sheet มีค่า ให้ใช้เป็น Default แต่ถ้าไม่มีเลยค่อยใช้ 500
     init_val = sheet_bal if sheet_bal > 0 else 500.0
     user_capital = st.number_input("💰 ทุนที่ต้องการใช้ (บาท)", value=init_val, step=100.0)
-    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=1000.0, step=100.0)
+    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=10000.0, step=1000.0)
     st.divider()
     if st.button("♻️ รีเฟรชข้อมูล (Sync)"): st.rerun()
 
-# หัวใจสำคัญ: ยึดค่าจาก Sidebar เป็นหลัก
 total_bal = user_capital
-
 st.title("🦔 Pepper Hunter")
 
 c_b1, c_b2 = st.columns(2)
 if c_b1.button("▶️ เริ่มการทำงาน (Global Start)"):
     global_state["bot_active"] = True
+    global_state["status_msg"] = "กำลังเริ่มกระบวนการวิเคราะห์ Top 30..."
 if c_b2.button("🛑 หยุดการทำงาน (Global Stop)"):
     global_state["bot_active"] = False
+    global_state["status_msg"] = "บอทถูกหยุดการทำงาน"
 
 if global_state["bot_active"]:
-    st.success(f"🔥 สถานะ: บอทกำลังรันอยู่ที่ Server | สแกนรอบล่าสุด: {global_state['last_scan']}")
+    st.success(f"🔥 สถานะ: {global_state['status_msg']} | รอบล่าสุด: {global_state['last_scan']}")
 else:
-    st.warning("💤 สถานะ: บอทหยุดการทำงาน")
+    st.warning(f"💤 สถานะ: {global_state['status_msg']}")
 
 # --- 4. Dashboard Metrics ---
 locked_money = 0.0
@@ -158,9 +153,7 @@ if not df_perf.empty:
 m1, m2, m3 = st.columns(3)
 m1.metric("เงินสดใช้ได้", f"฿{total_bal - locked_money:,.2f}")
 m2.metric("เงินที่ลงทุนอยู่", f"฿{locked_money:,.2f}")
-m3.metric("พอร์ตสุทธิ (ตามที่กรอก)", f"฿{total_bal:,.2f}", delta=f"{total_bal - sheet_bal:,.2f}" if sheet_bal > 0 else None)
-
-st.progress(min((total_bal / user_target), 1.0))
+m3.metric("พอร์ตสุทธิ", f"฿{total_bal:,.2f}", delta=f"{total_bal - sheet_bal:,.2f}" if sheet_bal > 0 else None)
 
 # --- 5. Visualizations ---
 st.divider()
@@ -171,38 +164,41 @@ with col_g1:
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number", value = global_state["current_score"],
         gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00FFCC"}},
-        title = {'text': f"Confidence: {global_state['current_ticker']}"}
+        title = {'text': f"LATEST: {global_state['current_ticker']}"}
     ))
     fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 with col_g2:
-    st.subheader("📈 Equity Curve (จาก Sheet)")
+    st.subheader("📉 Equity Curve")
     if not df_perf.empty:
         fig_line = px.line(df_perf, x=df_perf.index, y='Balance', template="plotly_dark")
         fig_line.update_traces(line_color='#00FFCC', line_width=3)
         st.plotly_chart(fig_line, use_container_width=True)
 
-# --- 6. Background Loop ---
+# --- 6. Background Loop (Top 30 Strategy) ---
 if global_state["bot_active"]:
-    watch_list = get_blue_chip_list(max_price_thb=total_bal)
     live_thb = get_live_thb_rate()
+    all_tickers = get_top_30_tickers()
     
     status_placeholder = st.empty()
-    for ticker in watch_list:
-        status_placeholder.write(f"⏳ Pepper กำลังส่อง: {ticker}...")
+    for ticker in all_tickers:
+        status_placeholder.write(f"🔍 กำลังวิเคราะห์เหรียญที่ {all_tickers.index(ticker)+1}/30: {ticker}")
         res = analyze_coin_ai(ticker)
+        
         if res:
+            # เก็บค่าล่าสุดไว้ใน Global เสมอแม้จะยังไม่กรองงบ เพื่อให้ Confidence ไม่เป็น 0
             global_state["current_score"] = res['Score']
             global_state["current_ticker"] = res['Symbol']
-            # บอทจะใช้ total_bal ที่พี่กรอกล่าสุดในการรัน
-            run_auto_trade(res, sheet, total_bal, live_thb)
-        time.sleep(2)
+            
+            # กรองงบ: ถ้าผ่านเกณฑ์ Confidence และ ราคาอยู่ในงบ Pepper
+            if res['Price_USD'] * live_thb <= total_bal:
+                run_auto_trade(res, sheet, total_bal, live_thb)
+                
+        time.sleep(0.5) # ปรับให้สแกนเร็วขึ้น
     
     global_state["last_scan"] = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
-    status_placeholder.write(f"✅ สแกนเสร็จสิ้นเมื่อ: {global_state['last_scan']}")
-    
-    time.sleep(600)
+    global_state["status_msg"] = "สแกน Top 30 ครบแล้ว กำลังรอรอบถัดไป"
     st.rerun()
 
 st.divider()
