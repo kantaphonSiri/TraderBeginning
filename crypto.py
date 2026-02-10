@@ -37,14 +37,14 @@ def get_live_exchange_rate():
 
 def get_bot_status(sheet):
     try:
-        val = sheet.cell(1, 11).value
+        val = sheet.cell(2, 11).value
         return val == "ON"
     except: return False
 
 def set_bot_status(sheet, status):
     try:
         val = "ON" if status else "OFF"
-        sheet.update_cell(1, 11, val)
+        sheet.update_cell(2, 11, val)
     except: pass
 
 def get_top_safe_tickers():
@@ -159,3 +159,4 @@ if bot_active:
 if not df_perf.empty:
     st.subheader("📉 พัฒนาการพอร์ตโฟลิโอ")
     st.line_chart(df_perf['Balance'])
+
