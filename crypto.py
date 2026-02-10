@@ -1,230 +1,179 @@
 import streamlit as st
 import pandas as pd
+import pandas_ta as ta
 import yfinance as yf
-import requests
+import gspread
 import time
-import os
-import pickle
+import plotly.express as px
 import plotly.graph_objects as go
+from google.oauth2.service_account import Credentials
+from sklearn.ensemble import RandomForestRegressor
+from textblob import TextBlob
+from datetime import datetime, timedelta, timezone
 
-# ---------------------------------------------------------
-# 1. CONFIG & DATABASE
-# ---------------------------------------------------------
-DB_FILE = "crypto_v11_responsive.pkl"
-# ปรับ layout="wide" เพื่อให้หน้าจอใช้พื้นที่ได้เต็มที่
-st.set_page_config(page_title="Budget-bet Pro", layout="wide")
-# ---------------------------------------------------------
-# CSS บังคับให้ Columns ไม่ยุบตัวบนมือถือ (Force 2 Columns)
-# ---------------------------------------------------------
-st.markdown("""
-    <style>
-    /* ตรวจสอบ class ที่เป็น container ของ columns */
-    [data-testid="column"] {
-        width: calc(50% - 1rem) !important;
-        flex: 1 1 calc(50% - 1rem) !important;
-        min-width: calc(50% - 1rem) !important;
-    }
-    
-    /* ปรับระยะห่างให้พอดี */
-    [data-testid="stHorizontalBlock"] {
-        flex-direction: row !important;
-        flex-wrap: wrap !important;
-        gap: 0.5rem !important;
-    }
-    
-    /* ลดขนาด font เล็กน้อยเพื่อให้เหมาะกับ 2 คอลัมน์บนมือถือ */
-    @media (max-width: 640px) {
-        .stMarkdown div p, .stMetric div {
-            font-size: 12px !important;
-        }
-        h3 {
-            font-size: 16px !important;
-        }
-    }
-    </style>
-""", unsafe_allow_html=True)
-if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}
-if 'dash_mode' not in st.session_state:
-    st.session_state.dash_mode = "วงกลม (Donut)"
-if 'master_data' not in st.session_state:
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, 'rb') as f:
-            st.session_state.master_data = pickle.load(f)
-    else:
-        st.session_state.master_data = {}
+# --- 1. การตั้งค่าหน้าจอ ---
+st.set_page_config(page_title="Pepper Hunter - Pro", layout="wide")
 
-# ---------------------------------------------------------
-# 2. CORE FUNCTIONS
-# ---------------------------------------------------------
-def get_ai_advice(df):
-    if df is None or len(df) < 20: return "รอข้อมูล...", "#808495"
-    close = df['Close'].astype(float)
-    current_p = close.iloc[-1]
-    ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)
-    rsi = 100 - (100 / (1 + rs)).iloc[-1]
-    if current_p > ema20 and 40 < rsi < 65: return "✅ น่าตาม (Trend)", "#00ffcc"
-    elif rsi < 30: return "💎 ของถูก (ช้อน)", "#ffcc00"
-    elif rsi > 75: return "⚠️ แพงไป (ระวัง)", "#ff4b4b"
-    elif current_p < ema20: return "📉 ขาลง (เลี่ยง)", "#ff4b4b"
-    else: return "⏳ รอดูจังหวะ", "#808495"
+# --- 2. Shared Global State ---
+@st.cache_resource
+def get_global_state():
+    return {
+        "bot_active": False,
+        "last_scan": "รอกระบวนการสแกน...",
+        "current_score": 0,
+        "current_ticker": "N/A",
+        "status_msg": "พร้อมทำงาน"
+    }
 
-def sync_data_safe():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1"
-        symbols = [c['symbol'].upper() for c in requests.get(url, timeout=10).json()]
-    except:
-        symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP']
-    try:
-        usd_thb = yf.Ticker("THB=X").fast_info['last_price']
-        st.session_state.master_data['EXCHANGE_RATE'] = usd_thb
-    except:
-        usd_thb = st.session_state.master_data.get('EXCHANGE_RATE', 35.0)
-    
-    new_data = st.session_state.master_data.copy()
-    with st.status("📡 AI Scanning & Syncing (Auto-Optimizing)...") as status:
-        for i in range(0, len(symbols), 20):
-            batch = symbols[i:i+20]
-            tickers = [f"{s}-USD" for s in batch]
-            try:
-                data_group = yf.download(tickers, period="1mo", interval="1h", group_by='ticker', progress=False)
-                for s in batch:
-                    try:
-                        df = data_group[f"{s}-USD"] if len(tickers) > 1 else data_group
-                        if not df.empty and not pd.isna(df['Close'].iloc[-1]):
-                            new_data[s] = {'price': float(df['Close'].iloc[-1]) * usd_thb, 'base_price': float(df['Close'].mean()) * usd_thb, 'df': df.ffill(), 'rank': symbols.index(s) + 1}
-                    except: continue
-                time.sleep(1.2)
-            except: continue
-        st.session_state.master_data = new_data
-        with open(DB_FILE, 'wb') as f: pickle.dump(new_data, f)
-        status.update(label="Sync Completed!", state="complete")
+global_state = get_global_state()
 
-# ---------------------------------------------------------
-# 3. SIDEBAR (RESPONSIVE DASHBOARD)
-# ---------------------------------------------------------
+# --- 3. ฟังก์ชันสนับสนุน ---
+
+def get_top_30_tickers():
+    return [
+        "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "DOT-USD", "LINK-USD", "AVAX-USD",
+        "POL-USD", "TRX-USD", "SHIB-USD", "LTC-USD", "BCH-USD", "UNI-USD", "NEAR-USD", "APT-USD", "DAI-USD",
+        "STX-USD", "FIL-USD", "ARB-USD", "ETC-USD", "IMX-USD", "FTM-USD", "RENDER-USD", "SUI-USD", "OP-USD", "PEPE-USD", "HBAR-USD"
+    ]
+
+def init_gsheet(sheet_name="trade_learning"):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        # เชื่อมต่อไฟล์ "Blue-chip Bet" และแท็บ "trade_learning" ตามรูปที่ 3
+        return gspread.authorize(creds).open("Blue-chip Bet").worksheet(sheet_name)
+    except Exception as e:
+        st.error(f"❌ เชื่อมต่อ Sheet ไม่ได้: {e}")
+        return None
+
+def get_news_data(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+        if not news: return 0, "ไม่มีข่าวใหม่"
+        sentiment = sum(TextBlob(n['title']).sentiment.polarity for n in news[:3]) / 3
+        return sentiment, news[0]['title']
+    except: return 0, "ดึงข่าวไม่ได้"
+
+def analyze_coin_ai(symbol, df_history):
+    try:
+        df = df_history.copy()
+        if len(df) < 30: return None
+        df.ta.rsi(length=14, append=True)
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
+        df = df.dropna()
+        X = df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[:-1]
+        y = df['Close'].shift(-1).iloc[:-1]
+        model = RandomForestRegressor(n_estimators=30, random_state=42).fit(X, y)
+        cur_p = float(df.iloc[-1]['Close'])
+        pred_p = model.predict(df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[[-1]])[0]
+        score = 0
+        if cur_p > df.iloc[-1]['EMA_20'] > df.iloc[-1]['EMA_50']: score += 40
+        if 40 < df.iloc[-1]['RSI_14'] < 65: score += 30
+        if pred_p > cur_p: score += 30
+        sent, head = get_news_data(symbol)
+        score += 10 if sent > 0.1 else -20 if sent < -0.1 else 0
+        return {"Symbol": symbol, "Price_USD": cur_p, "Score": max(0, min(100, score)), "Headline": head}
+    except: return None
+
+def run_auto_trade(res, sheet, total_balance, live_rate):
+    if not sheet: return
+    try:
+        # 🛡️ แก้ไขจุดที่ทำให้เกิด API Error
+        data = sheet.get_all_records()
+        df_trade = pd.DataFrame(data)
+        
+        is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')) if not df_trade.empty else False
+        price_thb = res['Price_USD'] * live_rate
+        now_th = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7))).strftime("%H:%M:%S %d-%m-%Y")
+
+        if res['Score'] >= 80 and not is_holding and len(df_trade[df_trade['สถานะ'] == 'HOLD']) < 3:
+            inv = total_balance * 0.20
+            # บันทึกตามลำดับ Column A-J ในรูปที่ 3
+            row = [now_th, res['Symbol'], "HOLD", round(price_thb, 4), 0, 0, res['Score'], round(total_balance, 2), round(inv/price_thb, 6), res['Headline']]
+            sheet.append_row(row)
+            st.toast(f"🚀 ซื้อ {res['Symbol']}")
+            
+        elif is_holding:
+            idx = df_trade[(df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD')].index[-1]
+            entry_p = float(df_trade.loc[idx, 'ราคาซื้อ(฿)'])
+            p_pct = ((price_thb - entry_p) / entry_p) * 100
+            if p_pct >= 3.0 or p_pct <= -2.0 or res['Score'] < 50:
+                new_bal = (total_balance - (float(df_trade.loc[idx, 'Balance']) * 0.20)) + (float(df_trade.loc[idx, 'Balance']) * 0.20 * (1 + (p_pct/100)))
+                sheet.update_cell(int(idx)+2, 3, "SOLD")
+                sheet.update_cell(int(idx)+2, 5, round(price_thb, 4))
+                sheet.update_cell(int(idx)+2, 6, f"{p_pct:.2f}%")
+                sheet.update_cell(int(idx)+2, 8, round(new_bal, 2))
+                st.toast(f"💰 ขาย {res['Symbol']}")
+    except Exception as e:
+        st.warning(f"⚠️ พักการเขียน Sheet ชั่วคราว (API Busy): {e}")
+
+# --- 4. UI Setup ---
+sheet = init_gsheet()
+df_perf = pd.DataFrame()
+sheet_bal = 0.0
+
+if sheet:
+    try:
+        recs = sheet.get_all_records()
+        if recs:
+            df_perf = pd.DataFrame(recs)
+            sheet_bal = float(df_perf.iloc[-1]['Balance'])
+    except: pass
+
 with st.sidebar:
-    st.title("💼 Portfolio Monitor")
-    if st.session_state.portfolio:
-        t_cost, t_market = 0, 0
-        chart_labels, chart_values = [], []
-        for sym, m in st.session_state.portfolio.items():
-            if sym in st.session_state.master_data:
-                cp = st.session_state.master_data[sym]['price']
-                t_cost += m['cost']
-                t_market += cp
-                chart_labels.append(sym)
-                chart_values.append(cp)
-        
-        t_diff = t_market - t_cost
-        t_pct = (t_diff / t_cost * 100) if t_cost > 0 else 0
-        
-        # Summary Card พร้อมสีที่ Match ตามกำไร/ขาดทุน
-        st.markdown(f"""
-            <div style="background:#1e1e1e; padding:15px; border-radius:10px; border-left: 5px solid {'#00ffcc' if t_diff >= 0 else '#ff4b4b'}; margin-bottom: 10px;">
-                <p style="margin:0; font-size:12px; color:#888;">กำไร/ขาดทุนรวม</p>
-                <h2 style="margin:0; color:{'#00ffcc' if t_diff >= 0 else '#ff4b4b'}">{t_diff:,.2f} ฿</h2>
-                <p style="margin:0; font-size:14px;">{t_pct:+.2f}%</p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # กราฟหลัก (ใช้ width='stretch' เพื่อความ Responsive)
-        if st.session_state.dash_mode == "วงกลม (Donut)":
-            fig = go.Figure(data=[go.Pie(labels=chart_labels, values=chart_values, hole=.5, marker=dict(colors=['#00ffcc', '#00d4ff', '#008cff', '#5000ff']), textinfo='label+percent')])
-        elif st.session_state.dash_mode == "แท่ง (Bar)":
-            fig = go.Figure(data=[go.Bar(x=chart_labels, y=chart_values, marker_color='#00ffcc')])
-        else: # เส้น (Line)
-            fig = go.Figure(data=[go.Scatter(x=chart_labels, y=chart_values, mode='lines+markers', line=dict(color='#00ffcc', width=3))])
-        
-        fig.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=10), height=220, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
+    st.header("⚙️ ตั้งค่า Pepper")
+    user_capital = st.number_input("💰 ทุนที่ต้องการใช้ (บาท)", value=sheet_bal if sheet_bal > 0 else 1000.0)
+    user_target = st.number_input("🎯 เป้าหมายกำไร (บาท)", value=10000.0)
+    if st.button("♻️ รีเฟรชข้อมูล (Sync)"): st.rerun()
 
-        with st.expander("⚙️ ตั้งค่า Dashboard"):
-            mode = st.radio("เลือกรูปแบบกราฟ:", ["วงกลม (Donut)", "แท่ง (Bar)", "เส้น (Line)"], index=["วงกลม (Donut)", "แท่ง (Bar)", "เส้น (Line)"].index(st.session_state.dash_mode))
-            if mode != st.session_state.dash_mode:
-                st.session_state.dash_mode = mode
-                st.rerun()
-        
-        st.divider()
-        st.subheader("📌 เหรียญที่ปักหมุด")
-        for sym, m in list(st.session_state.portfolio.items()):
-            with st.expander(f"{sym}"):
-                st.write(f"ทุนปัจจุบัน: {m['cost']:,.2f} ฿")
-                if st.button(f"🗑️ นำ {sym} ออก", key=f"side_del_{sym}", use_container_width=True):
-                    del st.session_state.portfolio[sym]
-                    st.rerun()
-    
-    st.divider()
-    budget = st.number_input("งบต่อเหรียญ (บาท):", min_value=0.0, step=1000.0)
-    if st.button("🔄 อัปเดตตลาด (Sync)", use_container_width=True):
-        sync_data_safe()
-        st.rerun()
+st.title("🦔 Pepper Hunter")
 
-# ---------------------------------------------------------
-# 4. MAIN UI (AUTO-MATCHING CARDS)
-# ---------------------------------------------------------
-st.title("🪙 Budget-bet")
-rate = st.session_state.master_data.get('EXCHANGE_RATE', 0)
-if rate > 0:
-    st.markdown(f"💵 **อัตราแลกเปลี่ยนปัจจุบัน:** `1 USD = {rate:.2f} THB`", help="ข้อมูลอ้างอิงจาก Yahoo Finance")
+c1, c2 = st.columns(2)
+if c1.button("▶️ Global Start"): global_state["bot_active"] = True
+if c2.button("🛑 Global Stop"): global_state["bot_active"] = False
 
-st.divider()
+if global_state["bot_active"]:
+    st.success(f"🔥 บอทรันอยู่ | รอบล่าสุด: {global_state['last_scan']}")
+else:
+    st.warning("💤 บอทปิดอยู่")
 
-if not st.session_state.master_data or len(st.session_state.master_data) < 2:
-    sync_data_safe()
-    st.rerun()
+# Metrics
+m1, m2, m3 = st.columns(3)
+m1.metric("เงินสด", f"฿{user_capital:,.2f}")
+m2.metric("สถานะ AI", f"{global_state['current_ticker']}")
+m3.metric("ความมั่นใจ", f"{global_state['current_score']}%")
 
-# ฟิลเตอร์ข้อมูล
-display_list = [s for s, d in st.session_state.master_data.items() if s != 'EXCHANGE_RATE' and (budget == 0 or d['price'] <= budget)]
-display_list = display_list[:100] if budget > 0 else display_list[:6]
+# --- 5. Loop ---
+if global_state["bot_active"]:
+    try:
+        tickers = get_top_30_tickers()
+        # 🛡️ Anti-Ban Batch Download
+        raw_data = yf.download(tickers, period="60d", interval="1h", progress=False, group_by='ticker')
+        live_rate = yf.download("THB=X", period="1d", interval="1m", progress=False)['Close'].iloc[-1]
+        
+        status_box = st.empty()
+        for t in tickers:
+            status_box.info(f"🧠 กำลังวิเคราะห์: {t}")
+            t_df = raw_data[t].copy().dropna()
+            res = analyze_coin_ai(t, t_df)
+            if res:
+                global_state["current_score"] = res['Score']
+                global_state["current_ticker"] = res['Symbol']
+                if res['Price_USD'] * live_rate <= user_capital:
+                    run_auto_trade(res, sheet, user_capital, live_rate)
+            time.sleep(1)
+            
+        global_state["last_scan"] = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error: {e}")
+        time.sleep(60); st.rerun()
 
-# ใช้ Columns แบบ Flexible เพื่อให้การ์ดเรียงตัวสวยงามตามหน้าจอ
-# ในหน้าจอใหญ่จะเป็น 2 คอลัมน์ ในมือถือจะเป็นคอลัมน์เดียวอัตโนมัติ
-cols = st.columns(2)
-
-for idx, s in enumerate(display_list):
-    data = st.session_state.master_data[s]
-    is_pinned = s in st.session_state.portfolio
-    advice, color = get_ai_advice(data['df'])
-    icon = "🔵" if data.get('rank', 100) <= 30 else "🪙"
-    
-    with cols[idx % 2]:
-        with st.container(border=True):
-            h1, h2 = st.columns([3, 1])
-            h1.subheader(f"{icon} {s}")
-            if h2.button("📍" if is_pinned else "📌", key=f"btn_p_{s}", use_container_width=True):
-                if is_pinned: del st.session_state.portfolio[s]
-                else: st.session_state.portfolio[s] = {'cost': data['price'], 'target': 15.0, 'stop': 7.0}
-                st.rerun()
-            
-            st.markdown(f"<span style='background:{color}; color:black; padding:3px 10px; border-radius:15px; font-weight:bold; font-size:11px;'>🔮 {advice}</span>", unsafe_allow_html=True)
-            
-            growth = ((data['price'] - data['base_price']) / data['base_price']) * 100
-            st.metric("ราคาตลาด", f"{data['price']:,.2f} ฿", f"{growth:+.2f}% (30d)")
-            
-            if is_pinned:
-                m = st.session_state.portfolio[s]
-                new_cost = st.number_input(f"ระบุราคาทุน {s}:", value=float(m['cost']), format="%.2f", key=f"in_{s}")
-                if new_cost != m['cost']:
-                    st.session_state.portfolio[s]['cost'] = new_cost
-                    st.rerun()
-                
-                c1, c2 = st.columns(2)
-                st.session_state.portfolio[s]['target'] = c1.slider("เป้า %", 5, 100, int(m['target']), key=f"t_{s}")
-                st.session_state.portfolio[s]['stop'] = c2.slider("คัด %", 3, 50, int(m['stop']), key=f"s_{s}")
-            
-            # กราฟราคาเหรียญ (Sparkline) - ใช้ width='stretch'
-            fig_p = go.Figure(data=[go.Scatter(y=data['df']['Close'].tail(50).values, mode='lines', line=dict(color=color, width=2.5))])
-            fig_p.update_layout(
-                height=140, 
-                margin=dict(l=0,r=0,t=10,b=0), 
-                xaxis_visible=False, 
-                yaxis_visible=False, 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_p, width='stretch', key=f"g_{s}", config={'displayModeBar': False})
+if not df_perf.empty:
+    st.divider()
+    st.subheader("📚 ประวัติการเทรด")
+    st.dataframe(df_perf.iloc[::-1], width='stretch')
