@@ -98,7 +98,6 @@ if sheet:
     except: pass
 
 # Sidebar
-st.sidebar.title("🦔 Pepper Hunter")
 init_money = st.sidebar.number_input("งบตั้งต้น (บาท)", value=1000.0)
 profit_goal = st.sidebar.number_input("กำไรที่ต้องการ (บาท)", value=10000.0)
 live_rate = get_live_exchange_rate()
@@ -112,7 +111,7 @@ if st.sidebar.button("START" if not bot_active else "STOP"):
         st.rerun()
 
 # Dashboard
-st.title("🌶️ Pepper Hunter - Smart Selection")
+st.title("🦔 Pepper Hunter")
 target_total = init_money + profit_goal
 profit_now = current_bal - init_money
 
@@ -171,3 +170,4 @@ if not df_perf.empty:
         st.line_chart(chart_data)
     else:
         st.line_chart(df_perf['Balance'])
+
