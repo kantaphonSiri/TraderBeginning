@@ -68,7 +68,6 @@ def analyze_coin_ai(symbol, df_history):
         model = RandomForestRegressor(n_estimators=50, random_state=42)
         model.fit(X.values, y.values)
         
-        # ดึงค่าล่าสุดเป็น Scalar (แก้ปัญหา Ambiguous Error)
         last_row = df.iloc[[-1]]
         cur_p = float(last_row['Close'].iloc[0])
         rsi_val = float(last_row['RSI_14'].iloc[0])
@@ -77,7 +76,7 @@ def analyze_coin_ai(symbol, df_history):
         
         pred_p = model.predict(last_row[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].values)[0]
         
-        # การให้คะแนน (Score Logic)
+        # Score Logic
         score = 0
         if cur_p > ema20 > ema50: score += 40
         if 40 < rsi_val < 65: score += 30
@@ -87,7 +86,7 @@ def analyze_coin_ai(symbol, df_history):
         score += 10 if sent > 0.05 else -10 if sent < -0.05 else 0
         
         return {"Symbol": symbol, "Price_USD": cur_p, "Score": max(0, min(100, score)), "Headline": head}
-    except Exception as e:
+    except:
         return None
 
 def run_auto_trade(res, sheet, total_balance, live_rate):
@@ -96,16 +95,14 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
         data = sheet.get_all_records()
         df_trade = pd.DataFrame(data)
         
-        # ปรับสกุลเงิน
         price_thb = res['Price_USD'] * live_rate
         now_th = datetime.now(timezone(timedelta(hours=7))).strftime("%H:%M:%S %d-%m-%Y")
         
-        # เช็คสถานะการถือครอง
         is_holding = False
         if not df_trade.empty and 'สถานะ' in df_trade.columns:
             is_holding = any((df_trade['เหรียญ'] == res['Symbol']) & (df_trade['สถานะ'] == 'HOLD'))
 
-        # LOGIC: BUY
+        # LOGIC: BUY (Score 85+)
         if res['Score'] >= 85 and not is_holding:
             investment = total_balance * 0.2
             row = [now_th, res['Symbol'], "HOLD", round(price_thb, 2), 0, "0%", res['Score'], round(total_balance, 2), round(investment/price_thb, 6), res['Headline']]
@@ -118,11 +115,10 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
             entry_p = float(df_trade.loc[idx, 'ราคาซื้อ(฿)'])
             p_pct = ((price_thb - entry_p) / entry_p) * 100
             
-            # เงื่อนไขขาย: กำไร 3%, ขาดทุน 2%, หรือ AI บอกว่าไม่น่าถือแล้ว
             if p_pct >= 3.0 or p_pct <= -2.0 or res['Score'] < 45:
-                # Update row ใน Google Sheet (Index + 2 เพราะ Sheet เริ่มที่ 1 และมี Header)
                 row_num = int(idx) + 2
-                new_balance = float(df_trade.loc[idx, 'Balance']) * (1 + (p_pct/100))
+                current_bal_at_trade = float(df_trade.loc[idx, 'Balance'])
+                new_balance = current_bal_at_trade * (1 + (p_pct/100))
                 
                 sheet.update_cell(row_num, 3, "SOLD")
                 sheet.update_cell(row_num, 5, round(price_thb, 2))
@@ -133,14 +129,59 @@ def run_auto_trade(res, sheet, total_balance, live_rate):
     except Exception as e:
         st.warning(f"⚠️ GSheet Update Delay: {e}")
 
-# --- 4. Main UI ---
+# --- 4. Main UI & Loop ---
+
 sheet = init_gsheet()
-df_perf = pd.DataFrame()
 current_bal = 1000.0
+df_perf = pd.DataFrame()
 
 if sheet:
     try:
         recs = sheet.get_all_records()
         if recs:
             df_perf = pd.DataFrame(recs)
-            current_bal = float(df_perf.iloc
+            # ดึง Balance ล่าสุดจากแถวสุดท้าย
+            if not df_perf.empty and 'Balance' in df_perf.columns:
+                current_bal = float(df_perf.iloc[-1]['Balance'])
+    except Exception as e:
+        st.error(f"Error reading history: {e}")
+
+# Sidebar UI
+st.sidebar.title("🤖 Pepper Control")
+st.session_state.bot_active = st.sidebar.toggle("Start Bot", value=st.session_state.bot_active)
+live_rate = st.sidebar.number_input("Exchange Rate (USD/THB)", value=35.0, step=0.1)
+
+# Main Dashboard
+st.title("🌶️ Pepper Hunter - Pro AI Trading")
+m1, m2, m3 = st.columns(3)
+m1.metric("Wallet Balance", f"{current_bal:,.2f} THB")
+m2.metric("Scan Status", "Active" if st.session_state.bot_active else "Idle")
+m3.metric("Last Scan Time", st.session_state.last_scan)
+
+if st.session_state.bot_active:
+    st.info("🔄 Bot is running... Analyzing markets in real-time.")
+    tickers = get_top_30_tickers()
+    
+    # สุ่มเลือกมา 5 ตัวต่อรอบเพื่อเลี่ยงการโดน Rate limit จาก API
+    sample = random.sample(tickers, 5)
+    
+    for symbol in sample:
+        with st.status(f"Scanning {symbol}...", expanded=False) as status:
+            df_h = yf.download(symbol, period="60d", interval="1d", progress=False)
+            if not df_h.empty:
+                res = analyze_coin_ai(symbol, df_h)
+                if res:
+                    run_auto_trade(res, sheet, current_bal, live_rate)
+                    st.write(f"✅ {symbol}: Score {res['Score']} | Price ${res['Price_USD']:.4f}")
+            status.update(label=f"Finished {symbol}", state="complete")
+    
+    st.session_state.last_scan = datetime.now().strftime("%H:%M:%S")
+    time.sleep(10) # รอ 10 วินาทีเพื่อ Refresh
+    st.rerun()
+
+# Display Trade Log
+if not df_perf.empty:
+    st.subheader("📊 Recent Trade History")
+    st.dataframe(df_perf.tail(15), use_container_width=True)
+else:
+    st.write("No trade history found. Start the bot to begin.")
