@@ -32,11 +32,15 @@ def init_gsheet():
 def get_live_exchange_rate():
     try:
         ticker = yf.Ticker("THB=X")
-        return round(ticker.fast_info['last_price'], 2)
-    except: return 35.5
+        # ดึงราคาจาก fast_info หรือ history กรณี fast_info ไม่มา
+        price = ticker.fast_info['last_price']
+        return round(price, 2)
+    except:
+        return 35.0
 
 def get_bot_status(sheet):
     try:
+        # อ่านจากช่อง K2 (แถว 2 คอลัมน์ 11)
         val = sheet.cell(2, 11).value
         return val == "ON"
     except: return False
@@ -48,7 +52,6 @@ def set_bot_status(sheet, status):
     except: pass
 
 def get_top_safe_tickers():
-    # คัดเฉพาะเหรียญที่มีความน่าเชื่อถือสูง (Blue-chip & High Liquidity)
     return [
         "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", 
         "DOT-USD", "LINK-USD", "AVAX-USD", "NEAR-USD", "MATIC-USD", "LTC-USD"
@@ -70,9 +73,13 @@ def analyze_coin_ai(symbol, df_history):
         
         last_row = df.iloc[[-1]]
         cur_p = float(last_row['Close'].iloc[0])
+        ema20 = float(last_row['EMA_20'].iloc[0])
+        ema50 = float(last_row['EMA_50'].iloc[0])
+        rsi_val = float(last_row['RSI_14'].iloc[0])
+        
         score = 0
-        if cur_p > float(last_row['EMA_20'].iloc[0]) > float(last_row['EMA_50'].iloc[0]): score += 50
-        if 40 < float(last_row['RSI_14'].iloc[0]) < 65: score += 30
+        if cur_p > ema20 > ema50: score += 50
+        if 40 < rsi_val < 65: score += 30
         pred_p = model.predict(last_row[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].values)[0]
         if pred_p > cur_p: score += 20
         
@@ -82,35 +89,45 @@ def analyze_coin_ai(symbol, df_history):
 # --- 3. UI & Control Logic ---
 
 sheet = init_gsheet()
-current_bal = 1000.0
-df_perf = pd.DataFrame()
 
-if sheet:
-    recs = sheet.get_all_records()
-    if recs:
-        df_perf = pd.DataFrame(recs)
-        if not df_perf.empty and 'Balance' in df_perf.columns:
-            current_bal = float(df_perf.iloc[-1]['Balance'])
-
-# Sidebar
+# SIDEBAR ตั้งค่าเริ่มต้น
 st.sidebar.title("🤖 Pepper Pro Control")
 init_money = st.sidebar.number_input("งบตั้งต้น (บาท)", value=1000.0)
 profit_goal = st.sidebar.number_input("กำไรที่ต้องการ (บาท)", value=10000.0)
 live_rate = get_live_exchange_rate()
 st.sidebar.metric("ค่าเงิน USD/THB (Live)", f"{live_rate} ฿")
 
-bot_active = get_bot_status(sheet)
-if st.sidebar.button("START BOT" if not bot_active else "STOP BOT"):
-    set_bot_status(sheet, not bot_active)
-    st.rerun()
+# แก้ปัญหา ERROR LINE 93: เช็คข้อมูลใน Sheet อย่างละเอียด
+current_bal = init_money
+df_perf = pd.DataFrame()
 
-# Dashboard
+if sheet:
+    try:
+        recs = sheet.get_all_records()
+        if recs:
+            df_perf = pd.DataFrame(recs)
+            # ตรวจสอบว่ามีคอลัมน์ Balance และมีข้อมูลไหม
+            if not df_perf.empty and 'Balance' in df_perf.columns:
+                val = df_perf.iloc[-1]['Balance']
+                if val != "":
+                    current_bal = float(val)
+    except Exception as e:
+        st.warning("กำลังรอข้อมูลแถวแรกจาก Google Sheet...")
+
+bot_active = get_bot_status(sheet) if sheet else False
+
+if st.sidebar.button("START BOT" if not bot_active else "STOP BOT"):
+    if sheet:
+        set_bot_status(sheet, not bot_active)
+        st.rerun()
+
+# --- DASHBOARD ---
 st.title("🌶️ Pepper Hunter - Smart Selection")
 target_total = init_money + profit_goal
 profit_now = current_bal - init_money
 
 m1, m2, m3 = st.columns(3)
-m1.metric("งบปัจจุบัน", f"{current_bal:,.2f} ฿", f"{profit_now:,.2f} ฿")
+m1.metric("งบปัจจุบัน", f"{current_bal:,.2f} ฿", f"{profit_now:,.2f} ฿ Profit")
 m2.metric("เป้าหมายเส้นชัย", f"{target_total:,.2f} ฿")
 m3.metric("สถานะบอท", "RUNNING 🟢" if bot_active else "IDLE 🔴")
 
@@ -126,37 +143,42 @@ if bot_active:
         all_picks = []
         tickers = get_top_safe_tickers()
         
-        for sym in tickers:
-            df_h = yf.download(sym, period="60d", interval="1d", progress=False)
-            if not df_h.empty:
-                res = analyze_coin_ai(sym, df_h)
-                if res:
-                    price_thb = res['Price_USD'] * live_rate
-                    # เงื่อนไข: ต้องมีเงินพอซื้ออย่างน้อย 1 หน่วย หรือเศษส่วนที่บอทกำหนด
-                    if current_bal >= (price_thb * 0.1): # สมมติขั้นต่ำซื้อ 0.1 หน่วย
-                        all_picks.append({
-                            "Symbol": sym,
-                            "Price_THB": price_thb,
-                            "Score": res['Score']
-                        })
+        # แสดงสถานะการโหลด
+        with st.status("กำลังวิเคราะห์ตลาด...", expanded=True) as status:
+            for sym in tickers:
+                df_h = yf.download(sym, period="60d", interval="1d", progress=False)
+                if not df_h.empty:
+                    res = analyze_coin_ai(sym, df_h)
+                    if res:
+                        price_thb = res['Price_USD'] * live_rate
+                        # คัดเฉพาะเหรียญที่งบเราซื้อไหว (อย่างน้อย 10% ของเหรียญ)
+                        if current_bal >= (price_thb * 0.1):
+                            all_picks.append({
+                                "Symbol": sym,
+                                "Price_THB": price_thb,
+                                "Score": res['Score']
+                            })
+            status.update(label="วิเคราะห์เสร็จสิ้น!", state="complete", expanded=False)
         
-        # เลือก Top 6 ที่คะแนนสูงสุด
+        # แสดงผล Top 6
         top_6 = sorted(all_picks, key=lambda x: x['Score'], reverse=True)[:6]
         
-        # แสดงผลเป็น Card 3x2
-        cols = st.columns(3)
-        for i, coin in enumerate(top_6):
-            with cols[i % 3]:
-                st.info(f"**{coin['Symbol']}**\n\nราคา: {coin['Price_THB']:,.2f} ฿\n\nAI Score: {coin['Score']}")
-                if coin['Score'] >= 85:
-                    st.write("🔥 *Signal: STRONG BUY*")
+        if top_6:
+            cols = st.columns(3)
+            for i, coin in enumerate(top_6):
+                with cols[i % 3]:
+                    st.info(f"**{coin['Symbol']}**")
+                    st.write(f"ราคา: {coin['Price_THB']:,.2f} ฿")
+                    st.write(f"AI Score: **{coin['Score']}**")
+                    if coin['Score'] >= 85:
+                        st.write("🔥 *Signal: STRONG BUY*")
+        else:
+            st.warning("งบปัจจุบันยังไม่พอซื้อเหรียญที่แนะนำในขณะนี้")
 
-        st.toast("กำลังวิเคราะห์รอบใหม่...", icon="🔄")
-        time.sleep(20)
+        time.sleep(30)
         st.rerun()
 
-# ประวัติกำไร
+# กราฟพัฒนาการ
 if not df_perf.empty:
     st.subheader("📉 พัฒนาการพอร์ตโฟลิโอ")
     st.line_chart(df_perf['Balance'])
-
