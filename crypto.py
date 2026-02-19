@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime, timedelta, timezone
 
 # --- 1. ตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="🦔 Pepper Sniper 10K", layout="wide")
+st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
 # --- 2. ฟังก์ชันระบบหลังบ้าน ---
 
@@ -95,7 +95,7 @@ if sheet:
     except: pass
 
 # --- 4. หน้าจอ Dashboard & Prediction ---
-st.title("🦔 Pepper Sniper: Profit Locker Mode")
+st.title("🦔 Pepper Hunter")
 goal = 10000.0
 
 # ส่วนคำนวณระยะเวลา (Estimation)
@@ -200,3 +200,4 @@ if not df_perf.empty:
 # พักเครื่อง 1 นาทีแล้วสแกนใหม่
 time.sleep(60)
 st.rerun()
+
