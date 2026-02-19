@@ -100,7 +100,7 @@ st.title("🦔 Pepper Hunter")
 st.subheader(f"เป้าหมาย: 10,000 ฿ | ปัจจุบัน: {current_bal:,.2f} ฿")
 
 # --- 5. ระบบ Radar สแกนตลาด ---
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "TAO-USD", "AVAX-USD", "LINK-USD", "AR-USD"]
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
 all_results = []
 
 with st.spinner("AI กำลังวิเคราะห์ข้อมูลรายชั่วโมง..."):
@@ -173,3 +173,4 @@ if not df_perf.empty:
 
 time.sleep(60)
 st.rerun()
+
