@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime, timedelta, timezone
 
 # --- 1. การตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="🦔 Pepper Hunter: Master Log", layout="wide")
+st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
 # --- 2. ฟังก์ชันสนับสนุน ---
 
@@ -106,7 +106,7 @@ if sheet:
     except: pass
 
 # Sidebar
-st.sidebar.title("🦔 Pepper Config")
+st.sidebar.title("🦔 Pepper Hunting")
 init_money = st.sidebar.number_input("งบตั้งต้น (฿)", value=1000.0)
 bot_active = get_bot_status(sheet) if sheet else False
 
@@ -193,3 +193,4 @@ wait_time = random.randint(60, 120)
 st.info(f"⌛ กำลังพักเครื่อง... จะเริ่มสแกนใหม่ใน {wait_time} วินาที")
 time.sleep(wait_time)
 st.rerun()
+
