@@ -125,7 +125,7 @@ m3.metric("คาดการณ์ถึงเป้าใน", f"{est_days} �
 st.divider()
 
 # --- 5. Radar & Single Trade Logic ---
-tickers = ["SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "DOT-USD", "XRP-USD", "ADA-USD", "BTC-USD", "ETH-USD", "BNB-USD", "SUI-USD"]
+tickers = ["SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "DOT-USD", "XRP-USD", "ADA-USD", "BTC-USD", "ETH-USD", "BNB-USD"]
 all_results = []
 
 # ใช้ timeframe 1h เพื่อความเร็ว
@@ -170,3 +170,4 @@ if not df_perf.empty:
 
 time.sleep(60)
 st.rerun()
+
