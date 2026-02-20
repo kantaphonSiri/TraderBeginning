@@ -30,8 +30,16 @@ def get_sentiment_pro(symbol):
         return score, latest_headline
     except: return 0, "News Offline"
 
+# --- ฟังก์ชันดึงค่าเงินบาทล่าสุด ---
+def get_live_thb():
+    try:
+        rate = yf.download("THB=X", period="1d", interval="1m", progress=False)['Close'].iloc[-1]
+        return float(rate)
+    except:
+        return 35.5 # Fallback ถ้าดึงไม่ได้
+
 # --- 3. ฟังก์ชันวิเคราะห์กราฟ ---
-def analyze_coin_ai(symbol, df, live_rate, current_bal):
+def analyze_coin_ai(symbol, df, live_rate, invest_amount):
     try:
         if len(df) < 100: return None 
         df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
@@ -54,11 +62,13 @@ def analyze_coin_ai(symbol, df, live_rate, current_bal):
 
         n_score, n_headline = get_sentiment_pro(symbol)
         score += n_score
-        est_qty = current_bal / cur_p_thb
+        
+        # สาย Safe: คำนวณจำนวนเหรียญจากงบเริ่มต้น (1,000)
+        est_qty = invest_amount / cur_p_thb
 
         return {
             "Symbol": symbol, "Market Price (฿)": cur_p_thb,
-            "Your Investment (฿)": current_bal, "You will Get (Qty)": est_qty,
+            "Safe Investment (฿)": invest_amount, "You will Get (Qty)": est_qty,
             "Score": score, "Trend": "🟢 Bullish", "News": n_headline
         }
     except: return None
@@ -74,10 +84,10 @@ def init_gsheet():
         return client.open("Blue-chip Bet").worksheet("trade_learning")
     except: return None
 
-# เริ่มดึงข้อมูล
 sheet = init_gsheet()
-live_rate = 35.5 
-current_bal, goal_bal = 1000.0, 10000.0
+live_rate = get_live_thb() # ดึงราคาล่าสุดจริง
+BASE_INVESTMENT = 1000.0   # ทุนคงที่ (สาย Safe)
+current_total_bal, goal_bal = 1000.0, 10000.0
 hunting_symbol, entry_p_thb, current_qty = None, 0.0, 0.0
 df_perf = pd.DataFrame()
 
@@ -86,87 +96,89 @@ if sheet:
     if recs:
         df_perf = pd.DataFrame(recs)
         last_row = df_perf.iloc[-1]
-        current_bal = float(last_row['Balance'])
+        current_total_bal = float(last_row['Balance'])
         if last_row['สถานะ'] == 'HUNTING':
             hunting_symbol = last_row['เหรียญ']
             entry_p_thb = float(last_row['ราคาซื้อ(฿)'])
             current_qty = float(last_row['จำนวน'])
 
-# --- 5. SIDEBAR: ข้อมูลบัญชี ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("👤 Account")
-    st.metric("Balance", f"{current_bal:,.2f} ฿")
-    prog = min(current_bal / goal_bal, 1.0)
+    st.title("🛡️ Safe Mode ON")
+    st.metric("Total Balance (รวมกำไร)", f"{current_total_bal:,.2f} ฿")
+    st.info(f"ไม้ถัดไปจะใช้ทุน: {BASE_INVESTMENT:,.2f} ฿")
+    prog = min(current_total_bal / goal_bal, 1.0)
     st.write(f"🎯 Goal: 10,000 ฿ ({prog*100:.1f}%)")
     st.progress(prog)
     st.divider()
-    st.info(f"LIVE Rate: {live_rate} THB/USD")
-    if st.button("🔄 Manual Refresh"): st.rerun()
+    st.write(f"💹 Real-time Rate: {live_rate:.2f} THB")
 
-# --- 6. MAIN: สถานะปัจจุบัน ---
+# --- 6. MAIN ---
 st.title("🦔 Pepper Hunter")
 
 if hunting_symbol:
-    # คำนวณกำไรปัจจุบัน
     curr_data = yf.download(hunting_symbol, period="1d", interval="1m", progress=False).iloc[-1]
     cur_p_thb = float(curr_data['Close']) * live_rate
     profit_pct = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
     
-    st.subheader(f"📍 กำลังถือเหรียญ: {hunting_symbol}")
+    st.subheader(f"📍 ถืออยู่: {hunting_symbol}")
     m1, m2, m3 = st.columns(3)
-    m1.metric("ทุนที่ลงไป", f"{current_bal:,.2f} ฿")
+    m1.metric("เงินทุนที่ใช้ไป", f"{BASE_INVESTMENT:,.2f} ฿")
     m2.metric("ราคาทุน", f"{entry_p_thb:,.2f} ฿")
-    m3.metric("กำไร/ขาดทุน", f"{profit_pct:.2f}%", delta=f"{profit_pct:.2f}%")
+    m3.metric("กำไร/ขาดทุน (%)", f"{profit_pct:.2f}%", delta=f"{profit_pct:.2f}%")
 else:
-    st.info("📡 Sniper is waiting... บอทกำลังซุ่มหาจุดเข้าที่ Score >= 80")
+    st.info(f"📡 กำลังรอสัญญาณ... (จะใช้ทุน {BASE_INVESTMENT} ฿ ในการเข้าซื้อ)")
 
-# --- 7. กราฟพอร์ตโฟลิโอ ---
+# --- 7. กราฟ ---
 if not df_perf.empty:
-    st.subheader("📈 Portfolio Growth")
+    st.subheader("📈 เส้นทางการเติบโต")
     chart_data = df_perf[['วันที่', 'Balance']].copy()
     chart_data = chart_data.set_index('วันที่')
-    st.area_chart(chart_data, color="#29b5e8") # ใช้ Area Chart สีฟ้าดูสะอาดตา
+    st.area_chart(chart_data, color="#2ecc71") # สีเขียวแสดงถึงความปลอดภัย
 
-# --- 8. เรดาร์วิเคราะห์ (เก็บใน Expander) ---
+# --- 8. เรดาร์ ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
-with st.expander("🔍 Market Radar (AI Analysis)", expanded=not hunting_symbol):
+with st.expander("🔍 ตารางวิเคราะห์ (ทุน 1,000 ฿)", expanded=not hunting_symbol):
     with st.spinner("🕵️ Pepper Scanning..."):
         data = yf.download(tickers, period="5d", interval="1h", group_by='ticker', progress=False)
         for sym in tickers:
             df_h = data[sym].dropna()
-            res = analyze_coin_ai(sym, df_h, live_rate, current_bal)
+            # ใช้ BASE_INVESTMENT (1000) ในการคำนวณจำนวนเหรียญที่จะได้
+            res = analyze_coin_ai(sym, df_h, live_rate, BASE_INVESTMENT)
             if res: all_results.append(res)
     
     if all_results:
         scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
         st.dataframe(scan_df.style.format({
             "Market Price (฿)": "{:,.2f}",
-            "Your Investment (฿)": "{:,.2f}",
-            "You will Get (Qty)": "{:.6f}",
-            "Score": "{:.0f}"
+            "Safe Investment (฿)": "{:,.2f}",
+            "You will Get (Qty)": "{:.6f}"
         }), use_container_width=True)
 
-# --- 9. การตัดสินใจซื้อ/ขาย ---
+# --- 9. ซื้อ/ขาย ---
 now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
 
-# Logic ซื้อ
 if not hunting_symbol and all_results:
     best_coin = scan_df.iloc[0] 
     if best_coin['Score'] >= 80:
+        # บังคับใช้ทุนคงที่ 1000 บาท
         row = [str(now_str), str(best_coin['Symbol']), "HUNTING", float(best_coin['Market Price (฿)']), 
-               0.0, "0%", int(best_coin['Score']), float(current_bal), float(best_coin['You will Get (Qty)']), 
-               "Pro Entry", "ON", 0, str(best_coin['News'])]
+               0.0, "0%", int(best_coin['Score']), float(current_total_bal), float(best_coin['You will Get (Qty)']), 
+               "Safe Mode Entry", "ON", 0, str(best_coin['News'])]
         sheet.append_row(row)
-        st.success(f"🚀 Pepper เลือกตัวที่ดีที่สุดแล้ว: {best_coin['Symbol']}")
+        st.success(f"🛡️ สาย Safe ลั่นไกแล้ว: {best_coin['Symbol']} ด้วยทุน {BASE_INVESTMENT} ฿")
         st.rerun()
 
-# Logic ขาย (ตัวอย่างระบบอัตโนมัติ)
 if hunting_symbol:
     if profit_pct >= 5.0 or profit_pct <= -3.0:
-        new_bal = current_qty * cur_p_thb
+        # คำนวณเงินที่ได้หลังขาย (ทุน 1000 + กำไร/ขาดทุน)
+        money_back = BASE_INVESTMENT * (1 + (profit_pct/100))
+        # ยอด Balance ใหม่ในกระเป๋า = ยอดเก่า - ทุนที่ควักไปตอนแรก + เงินที่ได้กลับมา
+        new_total_bal = current_total_bal - BASE_INVESTMENT + money_back
+        
         reason = "Take Profit 🚀" if profit_pct >= 5.0 else "Stop Loss 🛡️"
-        row = [str(now_str), hunting_symbol, "SOLD", entry_p_thb, cur_p_thb, f"{profit_pct:.2f}%", 0, new_bal, 0, reason, "ON"]
+        row = [str(now_str), hunting_symbol, "SOLD", entry_p_thb, cur_p_thb, f"{profit_pct:.2f}%", 0, new_total_bal, 0, reason, "ON"]
         sheet.append_row(row)
         st.balloons()
         st.rerun()
