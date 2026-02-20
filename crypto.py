@@ -170,26 +170,33 @@ if all_results:
                 time.sleep(2)
                 st.rerun()
 
+    # --- กรณีขาย (ปรับปรุงใหม่เพื่อป้องกันการบันทึกซ้ำ) ---
     else:
+        # เช็คก่อนว่าในรอบนี้ บอทยังถือเหรียญเดิมอยู่จริงไหม (กัน Error กรณีเพิ่งขายไปในพริบตา)
         current_coin = next((r for r in all_results if r['Symbol'] == hunting_symbol), None)
+        
         if current_coin:
             cur_p_thb = current_coin['Price_USD'] * live_rate
             profit_pct = ((cur_p_thb - entry_p) / entry_p) * 100
-            st.warning(f"📍 ถือ: {hunting_symbol} | กำไร: {profit_pct:.2f}% | ข่าวตอนนี้: {current_coin['News_Score']}")
+            st.warning(f"📍 ถืออยู่: {hunting_symbol} | กำไร: {profit_pct:.2f}%")
 
             sell_trigger, headline = False, ""
             if profit_pct >= 8.0: sell_trigger, headline = True, "Take Profit 🚀"
             elif profit_pct <= -4.0: sell_trigger, headline = True, "Stop Loss 🛡️"
-            elif profit_pct > 0.5 and current_coin['Score'] < 50: sell_trigger, headline = True, "Exit (Score Drop) 📉"
+            elif profit_pct > 0.5 and current_coin['Score'] < 50: sell_trigger, headline = True, "Exit (Low Score) 📉"
 
-            if sell_trigger:
+            # *** จุดสำคัญ: ตรวจสอบสถานะล่าสุดจาก Sheet อีกครั้งก่อนบันทึก ***
+            recs_check = sheet.get_all_records()
+            last_status = recs_check[-1]['สถานะ'] if recs_check else "SOLD"
+
+            if sell_trigger and last_status == 'HUNTING': # ต้องถืออยู่เท่านั้นถึงจะขายได้
                 new_bal = current_qty * cur_p_thb
-                row = [now_str, hunting_symbol, "SOLD", entry_p, cur_p_thb, f"{profit_pct:.2f}%", 
-                       current_coin['Score'], new_bal, 0, headline, "ON", current_coin['News_Score'], current_coin['Headline']]
+                row = [now_str, hunting_symbol, "SOLD", entry_p, cur_p_thb, f"{profit_pct:.2f}%", current_coin['Score'], new_bal, 0, headline, "ON"]
                 if sheet:
                     sheet.append_row(row)
+                    st.success(f"✅ ขายสำเร็จ: {headline}")
                     st.balloons()
-                    time.sleep(2)
+                    time.sleep(5) # ให้เวลาระบบ Google Sheet อัปเดตหน่อย
                     st.rerun()
 
 st.divider()
@@ -230,6 +237,7 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
 
 
