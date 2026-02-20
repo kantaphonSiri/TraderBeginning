@@ -202,7 +202,7 @@ if not df_perf.empty and 'Balance' in df_perf.columns:
     chart_data = df_perf[['วันที่', 'Balance']].copy()
     
     # แปลง Timestamp ให้เป็นรูปแบบวันที่ที่อ่านง่าย
-    chart_data['วันที่/เวลา'] = pd.to_datetime(chart_data['วันที่'], dayfirst=True)
+    chart_data['วันที่'] = pd.to_datetime(chart_data['วันที่'], dayfirst=True)
     chart_data = chart_data.set_index('วันที่')
     
     # แสดงกราฟเส้นพร้อมจุด Markers
@@ -230,6 +230,7 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
 
 
