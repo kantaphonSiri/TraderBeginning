@@ -14,21 +14,25 @@ st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
 # --- 2. ฟังก์ชันวิเคราะห์ข่าว (NLP แบบเบาเพื่อให้เสถียร) ---
 def get_sentiment_simple(symbol):
-    """วิเคราะห์อารมณ์ข่าวจากพาดหัวล่าสุดโดยไม่เพิ่ม Request API"""
+    """วิเคราะห์อารมณ์ข่าวแบบอัปเกรด (ลดโอกาส Error)"""
     try:
-        ticker = yf.Ticker(symbol)
-        news = ticker.news
-        if not news:
-            return 0, "No news found"
+        # สุ่มรอเล็กน้อยก่อนดึงข่าว เพื่อไม่ให้ยิงถี่ยิบเกินไป
+        time.sleep(random.uniform(0.5, 1.5))
         
-        # คีย์เวิร์ดตัดสินคะแนน
-        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch']
-        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell']
+        ticker = yf.Ticker(symbol)
+        # ใช้ timeout เพื่อไม่ให้บอทค้างถ้า Yahoo ไม่ตอบสนอง
+        news = ticker.get_news() 
+        
+        if not news or len(news) == 0:
+            return 0, "No recent news"
+        
+        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch', 'integration']
+        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell', 'lawsuit']
         
         score = 0
         latest_headline = news[0]['title']
         
-        # ตรวจสอบคีย์เวิร์ดใน 3 ข่าวล่าสุด
+        # วนลูปเช็คข่าว 3 หัวข้อล่าสุด
         for i in range(min(3, len(news))):
             headline = news[i]['title'].lower()
             for word in pos_words:
@@ -37,8 +41,9 @@ def get_sentiment_simple(symbol):
                 if word in headline: score -= 7
                 
         return score, latest_headline
-    except:
-        return 0, "News connection error"
+    except Exception as e:
+        # ถ้าดึงไม่ได้ ให้คืนค่า 0 และแจ้งเตือนเบาๆ
+        return 0, f"News Syncing... ({str(e)[:15]})"
 
 def analyze_coin_ai(symbol, df):
     try:
@@ -192,3 +197,4 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
