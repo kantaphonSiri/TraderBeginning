@@ -1,5 +1,3 @@
-# --- (Section 1-6 เหมือนเดิม แต่แนะนำให้ก๊อปปี้ใหม่เพื่อความเป๊ะของคีย์ข้อมูล) ---
-
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -7,36 +5,43 @@ import yfinance as yf
 import gspread
 import time
 import random
+import feedparser # ต้องมั่นใจว่าติดตั้งตัวนี้แล้ว (pip install feedparser)
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
 # --- 1. ตั้งค่าหน้าจอ ---
 st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
-# (ฟังก์ชัน get_sentiment_simple และ analyze_coin_ai เหมือนเดิมของคุณ)
-# --- 2. ฟังก์ชันวิเคราะห์ข่าว ---
-def get_sentiment_simple(symbol):
+# --- 2. ฟังก์ชันวิเคราะห์ข่าว (อัปเกรดเป็น RSS Feed) ---
+def get_sentiment_pro(symbol):
     try:
-        time.sleep(random.uniform(0.5, 1.2))
-        ticker = yf.Ticker(symbol)
-        news = ticker.get_news() 
-        if not news: return 0, "No recent news"
-        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'launch', 'ai', 'breakout']
-        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'risk', 'sell', 'crash']
-        score, latest_headline = 0, "No headline found"
-        for i, item in enumerate(news[:3]):
-            headline = item.get('title')
-            if headline:
-                if i == 0: latest_headline = headline
-                text = headline.lower()
-                for word in pos_words:
-                    if word in text: score += 5
-                for word in neg_words:
-                    if word in text: score -= 7
+        # ดึงข่าวจาก RSS Feed ของ NewsBTC เจาะจงรายเหรียญ
+        coin_name = symbol.split('-')[0].lower()
+        feed_url = f"https://www.newsbtc.com/search/{coin_name}/feed/"
+        feed = feedparser.parse(feed_url)
+        
+        if not feed.entries:
+            return 0, "No live news found"
+            
+        pos_words = ['bullish', 'breakout', 'gain', 'support', 'surge', 'rally', 'buy', 'growth', 'upgrade']
+        neg_words = ['bearish', 'drop', 'decline', 'risk', 'sell', 'crash', 'hack', 'scam', 'ban']
+        
+        score = 0
+        latest_headline = feed.entries[0].title
+        
+        # วิเคราะห์ 3 หัวข้อข่าวล่าสุด
+        for entry in feed.entries[:3]:
+            text = entry.title.lower()
+            for word in pos_words:
+                if word in text: score += 10 # ให้คะแนนข่าวที่มีผลต่อราคา
+            for word in neg_words:
+                if word in text: score -= 15 # ข่าวลบหักคะแนนหนักกว่า
+                
         return score, latest_headline
-    except: return 0, "News Sync Error"
+    except:
+        return 0, "News Feed Offline"
 
-# --- 3. ฟังก์ชันวิเคราะห์กราฟ (ปรับให้รองรับการซื้อขายบาทไทย) ---
+# --- 3. ฟังก์ชันวิเคราะห์กราฟ (EMA 50 + RSI เป็นหลัก) ---
 def analyze_coin_ai(symbol, df, live_rate):
     try:
         if len(df) < 100: return None 
@@ -53,15 +58,19 @@ def analyze_coin_ai(symbol, df, live_rate):
         score = 0
         status = "🟢 Bullish" if cur_p_thb > ema50_thb else "🔴 Bearish"
         
+        # กฎมือโปร: กราฟยืนเหนือ EMA 50 ให้ไปเลย 60 แต้ม
         if cur_p_thb > ema50_thb:
-            score += 50
+            score += 60
         else:
-            return {"Symbol": symbol, "Price (THB)": cur_p_thb, "Score": 10, "RSI": round(rsi_now, 2), "Trend": "Under EMA 50", "Headline": "Wait for Trend"}
+            return {"Symbol": symbol, "Price (THB)": cur_p_thb, "Score": 10, "RSI": round(rsi_now, 2), "Trend": "Bearish", "Headline": "Wait for Trend"}
 
-        if 40 < rsi_now < 65: score += 20
-        n_score, n_headline = get_sentiment_simple(symbol)
-        if n_score < 0: return None
-        score += n_score
+        # กฎมือโปร: RSI โซนเก็บของ ให้เพิ่มอีก 20 แต้ม (รวมเป็น 80 พร้อมซื้อ!)
+        if 40 < rsi_now < 68: 
+            score += 20
+            
+        # เสริมพลังด้วยข่าว (วิธีที่ 3)
+        n_score, n_headline = get_sentiment_pro(symbol)
+        score += n_score # ถ้ามีข่าวบวก คะแนนจะทะลุ 90-100
 
         return {
             "Symbol": symbol, "Price (THB)": cur_p_thb, "Score": score, 
@@ -111,7 +120,7 @@ st.divider()
 # --- 6. สแกน & Table ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
-with st.spinner("📡 Radar scanning..."):
+with st.spinner("📡 Radar scanning with Pro News..."):
     data = yf.download(tickers, period="5d", interval="1h", group_by='ticker', progress=False)
     for sym in tickers:
         df_h = data[sym].dropna()
@@ -121,40 +130,54 @@ with st.spinner("📡 Radar scanning..."):
 if all_results:
     st.subheader("📊 Radar Table")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
-    # แสดงตารางแบบจัดรูปแบบตัวเลข
     st.dataframe(scan_df.style.format({"Price (THB)": "{:,.2f}"}), use_container_width=True)
 
-# --- 7. การตัดสินใจ (แก้ไขจุดบั๊กคีย์ราคา) ---
+# --- 7. การตัดสินใจ ---
 now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
 
 if not hunting_symbol:
+    # ซื้อเมื่อ 80 คะแนน (กราฟสมบูรณ์)
     best_pick = next((r for r in all_results if r['Score'] >= 80), None)
     if best_pick:
         buy_p_thb = best_pick['Price (THB)']
         qty = current_bal / buy_p_thb
         row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], 
-               current_bal, qty, "Pro Entry", "ON", 0, best_pick['Headline']]
+               current_bal, qty, "v3 RSS Entry", "ON", 0, best_pick['Headline']]
         sheet.append_row(row)
-        st.success(f"🎯 Pepper ซื้อแล้ว: {best_pick['Symbol']} ที่ราคา {buy_p_thb:,.2f} ฿")
+        st.success(f"🎯 Pepper ซื้อแล้ว: {best_pick['Symbol']} ({buy_p_thb:,.2f} ฿)")
+        st.rerun()
+else:
+    # Logic ขาย (เหมือนเดิมแต่แม่นยำขึ้น)
+    curr_data = yf.download(hunting_symbol, period="1d", interval="1m", progress=False).iloc[-1]
+    cur_p_thb = float(curr_data['Close']) * live_rate
+    profit_pct = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
+    st.warning(f"📍 ถืออยู่: {hunting_symbol} | กำไร: {profit_pct:.2f}%")
+    
+    sell_trigger, sell_reason = False, ""
+    if profit_pct >= 5.0: sell_trigger, sell_reason = True, "Take Profit 🚀"
+    elif 0.5 < profit_pct < 1.5:
+        score_now = next((r['Score'] for r in all_results if r['Symbol'] == hunting_symbol), 100)
+        if score_now < 40: sell_trigger, sell_reason = True, "Trend Exit 🛡️"
+
+    if sell_trigger:
+        new_bal = current_qty * cur_p_thb
+        row = [now_str, hunting_symbol, "SOLD", entry_p_thb, cur_p_thb, f"{profit_pct:.2f}%", 0, new_bal, 0, sell_reason, "ON"]
+        sheet.append_row(row)
+        st.balloons()
         st.rerun()
 
-# --- 8. กราฟพอร์ตโฟลิโอ (X=เวลา, Y=เงิน) ---
+# --- 8. กราฟพอร์ตโฟลิโอ ---
 st.divider()
 if not df_perf.empty:
     st.subheader("📈 Portfolio Growth Path")
-    # แกน X = วันที่/เวลา, แกน Y = Balance
-    # เพิ่มเส้นเป้าหมาย 10,000 เข้าไปเปรียบเทียบ
     try:
-        chart_data = df_perf.copy()
-        chart_data = chart_data[['วันที่', 'Balance']]
+        # ใช้ Column วันที่จาก Sheet ของคุณ
+        chart_data = df_perf[['วันที่', 'Balance']].copy()
         chart_data['Goal'] = 10000
         chart_data = chart_data.set_index('วันที่')
-        
-        st.line_chart(chart_data) # แสดงทั้งเงินปัจจุบันและเส้นชัย
+        st.line_chart(chart_data)
     except:
-        st.info("📊 กำลังรวบรวมข้อมูลเพื่อวาดกราฟ...")
+        st.info("📊 กำลังรอข้อมูลประวัติเพื่อแสดงกราฟ...")
 
-# (ส่วน Loop ท้ายไฟล์คงเดิม)
 time.sleep(300)
 st.rerun()
-
