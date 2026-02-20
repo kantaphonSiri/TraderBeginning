@@ -101,7 +101,7 @@ st.title("🦔 Pepper Hunter")
 st.subheader(f"💰 พอร์ตปัจจุบัน: {current_bal:,.2f} ฿ | เป้าหมาย: 10,000 ฿")
 
 # --- 5. ระบบ Radar (พร้อมระบบป้องกัน Bot Detection) ---
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "DOT-USD"]
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
 all_results = []
 
 st.divider()
@@ -167,3 +167,4 @@ refresh_time = random.randint(60, 120)
 st.write(f"⏱️ ระบบจะสแกนใหม่ในอีก {refresh_time} วินาที...")
 time.sleep(refresh_time)
 st.rerun()
+
