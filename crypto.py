@@ -14,36 +14,45 @@ st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
 # --- 2. ฟังก์ชันวิเคราะห์ข่าว (NLP แบบเบาเพื่อให้เสถียร) ---
 def get_sentiment_simple(symbol):
-    """วิเคราะห์อารมณ์ข่าวแบบอัปเกรด (ลดโอกาส Error)"""
     try:
-        # สุ่มรอเล็กน้อยก่อนดึงข่าว เพื่อไม่ให้ยิงถี่ยิบเกินไป
+        # สุ่มรอเล็กน้อยลดการโดน Detect
         time.sleep(random.uniform(0.5, 1.5))
         
         ticker = yf.Ticker(symbol)
-        # ใช้ timeout เพื่อไม่ให้บอทค้างถ้า Yahoo ไม่ตอบสนอง
         news = ticker.get_news() 
         
         if not news or len(news) == 0:
             return 0, "No recent news"
         
-        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch', 'integration']
-        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell', 'lawsuit']
+        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch', 'ai']
+        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell']
         
         score = 0
-        latest_headline = news[0]['title']
+        latest_headline = "No headline found"
         
-        # วนลูปเช็คข่าว 3 หัวข้อล่าสุด
-        for i in range(min(3, len(news))):
-            headline = news[i]['title'].lower()
-            for word in pos_words:
-                if word in headline: score += 5
-            for word in neg_words:
-                if word in headline: score -= 7
+        # วนลูปเช็คข้อมูลข่าวอย่างปลอดภัย
+        found_headlines = 0
+        for item in news:
+            # ใช้ .get('title') เพื่อไม่ให้ Error ถ้าไม่มี Key นี้
+            headline = item.get('title')
+            
+            if headline:
+                if found_headlines == 0:
+                    latest_headline = headline # เก็บหัวข้อแรกสุดไว้โชว์
+                
+                text = headline.lower()
+                for word in pos_words:
+                    if word in text: score += 5
+                for word in neg_words:
+                    if word in text: score -= 7
+                
+                found_headlines += 1
+                if found_headlines >= 3: break # เอาแค่ 3 ข่าวพอ
                 
         return score, latest_headline
     except Exception as e:
-        # ถ้าดึงไม่ได้ ให้คืนค่า 0 และแจ้งเตือนเบาๆ
-        return 0, f"News Syncing... ({str(e)[:15]})"
+        # ถ้าพังจริงๆ ให้บอก Error สั้นๆ
+        return 0, f"Sync Error: {str(e)[:15]}"
 
 def analyze_coin_ai(symbol, df):
     try:
@@ -197,4 +206,5 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
