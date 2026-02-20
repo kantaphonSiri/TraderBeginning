@@ -101,7 +101,7 @@ except Exception as e:
 if all_results:
     st.subheader("📊 AI Sniper Radar")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
-    st.dataframe(scan_df, use_container_width=True)
+    st.dataframe(scan_df, width='stretch')
 else:
     st.warning("⌛ ยังไม่มีข้อมูลสำหรับแสดงผลในรอบนี้")
 
@@ -155,7 +155,11 @@ if not df_perf.empty and 'Balance' in df_perf.columns:
 # --- 7. ระบบ Cooldown และ Auto Refresh ---
 if st.button("🔄 Force Refresh Now"):
     st.rerun()
+    
+wait_time = 300 # 5 นาที
+for i in range(wait_time, 0, -10):
+    countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
+    time.sleep(10) 
 
-st.write("⏱️ ระบบความปลอดภัย: จะสแกนใหม่โดยอัตโนมัติในอีก 5 นาที...")
-time.sleep(300) # Cooldown 5 นาที เพื่อเลี่ยงการโดน Detect
 st.rerun()
+
