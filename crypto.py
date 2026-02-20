@@ -100,16 +100,21 @@ df_perf = pd.DataFrame()
 current_bal = 1000.0
 hunting_symbol = None
 
+# --- แก้ไขส่วนนี้ใน Section 3 ---
 if sheet:
     recs = sheet.get_all_records()
     if recs:
         df_perf = pd.DataFrame(recs)
-        current_bal = float(df_perf.iloc[-1]['Balance']) if 'Balance' in df_perf.columns else 1000.0
-        h_rows = df_perf[df_perf['สถานะ'] == 'HUNTING']
-        if not h_rows.empty:
-            hunting_symbol = h_rows.iloc[-1]['เหรียญ']
-            entry_p = float(h_rows.iloc[-1]['ราคาซื้อ(฿)'])
-            current_qty = float(h_rows.iloc[-1]['จำนวน'])
+        last_row = df_perf.iloc[-1] # ดูแค่แถวสุดท้ายของ Sheet เท่านั้น
+        current_bal = float(last_row['Balance'])
+        
+        # ถ้าแถวสุดท้าย "ไม่ใช่" HUNTING แปลว่าเราว่างงาน
+        if last_row['สถานะ'] == 'HUNTING':
+            hunting_symbol = last_row['เหรียญ']
+            entry_p = float(last_row['ราคาซื้อ(฿)'])
+            current_qty = float(last_row['จำนวน'])
+        else:
+            hunting_symbol = None # สั่งให้บอทรู้ว่าตอนนี้ไม่มีเหรียญในมือแล้ว
 
 # --- 4. หน้า UI ---
 st.title("🦔 Pepper Hunter")
@@ -236,5 +241,6 @@ for i in range(300, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
 
