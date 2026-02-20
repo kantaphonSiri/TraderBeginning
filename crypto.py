@@ -56,38 +56,52 @@ def get_sentiment_simple(symbol):
 
 def analyze_coin_ai(symbol, df):
     try:
-        if len(df) < 50: return None
+        if len(df) < 200: return None # ต้องใช้ข้อมูลเยอะขึ้นเพื่อความแม่น
         df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
         
+        # คำนวณอินดิเคเตอร์เชิงลึก
         df.ta.rsi(length=14, append=True)
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True) # เส้นแนวโน้มใหญ่
         df = df.dropna()
-        
-        X = df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[:-1]
-        y = df['Close'].shift(-1).iloc[:-1]
-        model = RandomForestRegressor(n_estimators=30, random_state=42)
-        model.fit(X.values, y.values)
         
         last_row = df.iloc[[-1]]
         cur_p = float(last_row['Close'].iloc[0])
+        rsi_now = float(last_row['RSI_14'].iloc[0])
+        ema20 = float(last_row['EMA_20'].iloc[0])
+        ema50 = float(last_row['EMA_50'].iloc[0])
+        ema200 = float(last_row['EMA_200'].iloc[0])
         
-        # --- คำนวณคะแนนเทคนิค (80%) ---
-        tech_score = 0
-        if cur_p > float(last_row['EMA_20'].iloc[0]) > float(last_row['EMA_50'].iloc[0]): tech_score += 40
-        if 40 < float(last_row['RSI_14'].iloc[0]) < 65: tech_score += 25
-        if model.predict(last_row[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].values)[0] > cur_p: tech_score += 15
+        # --- ระบบกรองความเสี่ยง (Sniper Filters) ---
+        score = 0
         
-        # --- คำนวณคะแนนข่าว (20%) ---
+        # 1. เงื่อนไขขาขึ้นรอบใหญ่ (ต้องผ่านถึงจะได้คะแนน)
+        if cur_p > ema200:
+            score += 30 
+        else:
+            return None # ถ้าอยู่ใต้เส้น 200 วัน ไม่เล่นเลย (ลดความเสี่ยง 80%)
+            
+        # 2. ความแข็งแกร่งของเทรนด์ (EMA เรียงตัว)
+        if cur_p > ema20 > ema50:
+            score += 30
+            
+        # 3. จุดซื้อที่เหมาะสม (RSI ไม่ Overbought และกำลังเงยหน้า)
+        if 45 < rsi_now < 65: # ไม่ซื้อถ้า RSI > 65 (ดอย) และไม่ซื้อถ้าอ่อนแรง < 45
+            score += 20
+            
+        # 4. วิเคราะห์ข่าว (Sentiment Filter)
         news_score, news_headline = get_sentiment_simple(symbol)
+        if news_score < 0:
+            return None # ถ้ามีข่าวลบ ห้ามซื้อเด็ดขาด!
         
-        total_score = tech_score + news_score
-        total_score = max(0, min(100, total_score)) # คุมคะแนนไม่ให้เกิน 100
-        
+        score += news_score # บวกคะแนนข่าวเข้าไป (สูงสุดประมาณ 10-15)
+
+        # สรุปผล
         return {
             "Symbol": symbol, 
             "Price_USD": cur_p, 
-            "Score": total_score, 
+            "Score": score, 
             "News_Score": news_score,
             "Headline": news_headline,
             "Last_Update": datetime.now(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
@@ -155,7 +169,7 @@ if all_results:
 if all_results:
     now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
     scan_df_sorted = pd.DataFrame(all_results).sort_values('Score', ascending=False)
-    best_pick = all_results[0] if all_results[0]['Score'] >= 70 else None
+    best_pick = all_results[0] if all_results[0]['Score'] >= 80 else None
 
     if not hunting_symbol:
         if best_pick:
@@ -237,6 +251,7 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
 
 
