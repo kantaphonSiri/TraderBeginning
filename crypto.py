@@ -84,8 +84,56 @@ for i, sym in enumerate(tickers):
     time.sleep(0.5) # ลด jitter ให้เหลือสั้นๆ เพื่อเลี่ยง timeout
 
 # --- 6. ตัดสินใจและจบงาน ---
+# --- 6. ตัดสินใจซื้อ-ขาย (Logic) ---
 if all_results:
-    # (Logic การซื้อขายคงเดิมตามที่คุณมี...)
+    now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
+    
+    # ดึงผลลัพธ์ที่คะแนนสูงสุดมาดู
+    scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
+    best_pick = all_results[0] if all_results[0]['Score'] >= 70 else None # ปรับเหลือ 70 ให้ซื้อง่ายขึ้น
+
+    # --- กรณีที่ 1: ยังไม่มีเหรียญในมือ (ตัดสินใจซื้อ) ---
+    if not hunting_symbol:
+        if best_pick:
+            buy_p_thb = best_pick['Price_USD'] * live_rate
+            qty = current_bal / buy_p_thb
+            # เตรียมแถวข้อมูลเพื่อบันทึกลง Sheet
+            row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], current_bal, qty, "AI Sniper Buy", "ON"]
+            if sheet:
+                sheet.append_row(row)
+                st.success(f"🎯 ตัดสินใจซื้อ: {best_pick['Symbol']} ที่ราคา {buy_p_thb:,.2f} ฿")
+                time.sleep(2)
+                st.rerun()
+        else:
+            st.info("⌛ คะแนนยังไม่ถึง 70 บอทกำลังซุ่มรอโอกาส...")
+
+    # --- กรณีที่ 2: มีเหรียญในมืออยู่แล้ว (ตัดสินใจขาย) ---
+    else:
+        current_coin = next((r for r in all_results if r['Symbol'] == hunting_symbol), None)
+        if current_coin:
+            cur_p_thb = current_coin['Price_USD'] * live_rate
+            profit_pct = ((cur_p_thb - entry_p) / entry_p) * 100
+            
+            st.warning(f"📍 กำลังถือ: {hunting_symbol} | กำไรตอนนี้: {profit_pct:.2f}%")
+
+            sell_trigger = False
+            headline = ""
+
+            if profit_pct >= 8.0: # กำไรถึงเป้า
+                sell_trigger, headline = True, "Take Profit 🚀"
+            elif profit_pct <= -4.0: # ตัดขาดทุน
+                sell_trigger, headline = True, "Stop Loss 🛡️"
+            elif profit_pct > 0.5 and current_coin['Score'] < 50: # กราฟเริ่มเสียทรง
+                sell_trigger, headline = True, "Exit (Score Drop) 📉"
+
+            if sell_trigger:
+                new_bal = current_qty * cur_p_thb
+                row = [now_str, hunting_symbol, "SOLD", entry_p, cur_p_thb, f"{profit_pct:.2f}%", current_coin['Score'], new_bal, 0, headline, "ON"]
+                if sheet:
+                    sheet.append_row(row)
+                    st.balloons()
+                    time.sleep(2)
+                    st.rerun()
     pass
 
 st.divider()
@@ -99,3 +147,4 @@ if st.button("🔄 Force Refresh Now"):
 st.write("ระบบจะสแกนใหม่โดยอัตโนมัติในระยะเวลาอันสั้น...")
 time.sleep(30) # ลดเหลือ 30 วินาทีเพื่อเลี่ยง Health Check Fail
 st.rerun()
+
