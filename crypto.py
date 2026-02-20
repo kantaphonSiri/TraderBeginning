@@ -1,3 +1,5 @@
+# --- (Section 1-6 เหมือนเดิม แต่แนะนำให้ก๊อปปี้ใหม่เพื่อความเป๊ะของคีย์ข้อมูล) ---
+
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -11,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 # --- 1. ตั้งค่าหน้าจอ ---
 st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
+# (ฟังก์ชัน get_sentiment_simple และ analyze_coin_ai เหมือนเดิมของคุณ)
 # --- 2. ฟังก์ชันวิเคราะห์ข่าว ---
 def get_sentiment_simple(symbol):
     try:
@@ -33,8 +36,8 @@ def get_sentiment_simple(symbol):
         return score, latest_headline
     except: return 0, "News Sync Error"
 
-# --- 3. ฟังก์ชันวิเคราะห์กราฟ ---
-def analyze_coin_ai(symbol, df):
+# --- 3. ฟังก์ชันวิเคราะห์กราฟ (ปรับให้รองรับการซื้อขายบาทไทย) ---
+def analyze_coin_ai(symbol, df, live_rate):
     try:
         if len(df) < 100: return None 
         df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
@@ -43,10 +46,7 @@ def analyze_coin_ai(symbol, df):
         df = df.dropna()
         
         last_row = df.iloc[[-1]]
-        cur_p_usd = float(last_row['Close'].iloc[0])
-        # แปลงเป็นบาทไทยทันที
-        cur_p_thb = cur_p_usd * live_rate 
-        
+        cur_p_thb = float(last_row['Close'].iloc[0]) * live_rate
         ema50_thb = float(last_row['EMA_50'].iloc[0]) * live_rate
         rsi_now = float(last_row['RSI_14'].iloc[0])
         
@@ -56,14 +56,7 @@ def analyze_coin_ai(symbol, df):
         if cur_p_thb > ema50_thb:
             score += 50
         else:
-            return {
-                "Symbol": symbol, 
-                "Price (THB)": f"{cur_p_thb:,.2f}", # แสดงคอมม่าและทศนิยม
-                "Score": 10, 
-                "RSI": round(rsi_now, 2), 
-                "Trend": "Under EMA 50", 
-                "Headline": "Wait for Trend"
-            }
+            return {"Symbol": symbol, "Price (THB)": cur_p_thb, "Score": 10, "RSI": round(rsi_now, 2), "Trend": "Under EMA 50", "Headline": "Wait for Trend"}
 
         if 40 < rsi_now < 65: score += 20
         n_score, n_headline = get_sentiment_simple(symbol)
@@ -71,12 +64,8 @@ def analyze_coin_ai(symbol, df):
         score += n_score
 
         return {
-            "Symbol": symbol, 
-            "Price (THB)": f"{cur_p_thb:,.2f}", 
-            "Score": score, 
-            "RSI": round(rsi_now, 2), 
-            "Trend": status, 
-            "Headline": n_headline
+            "Symbol": symbol, "Price (THB)": cur_p_thb, "Score": score, 
+            "RSI": round(rsi_now, 2), "Trend": status, "Headline": n_headline
         }
     except: return None
 
@@ -93,8 +82,8 @@ def init_gsheet():
 
 sheet = init_gsheet()
 live_rate = 35.5 
-current_bal, initial_bal, goal_bal = 1000.0, 1000.0, 10000.0
-hunting_symbol = None
+current_bal, goal_bal = 1000.0, 10000.0
+hunting_symbol, df_perf = None, pd.DataFrame()
 
 if sheet:
     recs = sheet.get_all_records()
@@ -109,8 +98,6 @@ if sheet:
 
 # --- 5. UI: Dashboard & Goal ---
 st.title("🦔 Pepper Hunter")
-
-# ระบบเป้าหมาย (Goal)
 col_g1, col_g2 = st.columns([1, 3])
 with col_g1:
     st.metric("Current Balance", f"{current_bal:,.2f} ฿")
@@ -128,50 +115,45 @@ with st.spinner("📡 Radar scanning..."):
     data = yf.download(tickers, period="5d", interval="1h", group_by='ticker', progress=False)
     for sym in tickers:
         df_h = data[sym].dropna()
-        res = analyze_coin_ai(sym, df_h)
+        res = analyze_coin_ai(sym, df_h, live_rate)
         if res: all_results.append(res)
 
 if all_results:
     st.subheader("📊 Radar Table")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
-    # แสดงตารางให้ User ดู
-    st.dataframe(scan_df, use_container_width=True)
+    # แสดงตารางแบบจัดรูปแบบตัวเลข
+    st.dataframe(scan_df.style.format({"Price (THB)": "{:,.2f}"}), use_container_width=True)
 
-# --- 7. การตัดสินใจ ---
+# --- 7. การตัดสินใจ (แก้ไขจุดบั๊กคีย์ราคา) ---
 now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
 
 if not hunting_symbol:
     best_pick = next((r for r in all_results if r['Score'] >= 80), None)
     if best_pick:
-        buy_p_thb = best_pick['Price'] * live_rate
+        buy_p_thb = best_pick['Price (THB)']
         qty = current_bal / buy_p_thb
         row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], 
                current_bal, qty, "Pro Entry", "ON", 0, best_pick['Headline']]
         sheet.append_row(row)
-        st.success(f"🎯 Sniper ซื้อแล้ว: {best_pick['Symbol']}")
-        st.rerun()
-else:
-    # กรณีถือเหรียญ
-    curr_data = yf.download(hunting_symbol, period="1d", interval="1m", progress=False).iloc[-1]
-    cur_p_thb = float(curr_data['Close']) * live_rate
-    profit_pct = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
-    st.warning(f"📍 ถืออยู่: {hunting_symbol} | กำไร: {profit_pct:.2f}%")
-    
-    sell_trigger, sell_reason = False, ""
-    if profit_pct >= 5.0: sell_trigger, sell_reason = True, "Take Profit 🚀"
-    elif 0.5 < profit_pct < 1.5:
-        # เช็ค Score ถ้าสัญญาณอ่อนให้รีบออก
-        score_now = next((r['Score'] for r in all_results if r['Symbol'] == hunting_symbol), 100)
-        if score_now < 40: sell_trigger, sell_reason = True, "Trail Stop 🛡️"
-
-    if sell_trigger:
-        new_bal = current_qty * cur_p_thb
-        row = [now_str, hunting_symbol, "SOLD", entry_p_thb, cur_p_thb, f"{profit_pct:.2f}%", 0, new_bal, 0, sell_reason, "ON"]
-        sheet.append_row(row)
-        st.balloons()
+        st.success(f"🎯 Pepper ซื้อแล้ว: {best_pick['Symbol']} ที่ราคา {buy_p_thb:,.2f} ฿")
         st.rerun()
 
+# --- 8. กราฟพอร์ตโฟลิโอ (X=เวลา, Y=เงิน) ---
+st.divider()
+if not df_perf.empty:
+    st.subheader("📈 Portfolio Growth Path")
+    # แกน X = วันที่/เวลา, แกน Y = Balance
+    # เพิ่มเส้นเป้าหมาย 10,000 เข้าไปเปรียบเทียบ
+    try:
+        chart_data = df_perf.copy()
+        chart_data = chart_data[['วันที่/เวลา', 'Balance']]
+        chart_data['Goal'] = 10000
+        chart_data = chart_data.set_index('วันที่/เวลา')
+        
+        st.line_chart(chart_data) # แสดงทั้งเงินปัจจุบันและเส้นชัย
+    except:
+        st.info("📊 กำลังรวบรวมข้อมูลเพื่อวาดกราฟ...")
+
+# (ส่วน Loop ท้ายไฟล์คงเดิม)
 time.sleep(300)
 st.rerun()
-
-
