@@ -68,20 +68,37 @@ st.title("🦔 Pepper Hunter")
 st.write(f"💰 Balance: {current_bal:,.2f} ฿ | Target: 10,000 ฿")
 
 # --- 5. สแกน (ลดความเสี่ยง Timeout) ---
+# --- 5. สแกน (ฉบับแก้ไขตารางไม่ขึ้น) ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
-table_area = st.empty()
+
+# ส่วนแสดงผลบนหน้าจอ
+status_area = st.empty()
 progress_bar = st.progress(0)
 
 for i, sym in enumerate(tickers):
-    df_h = yf.download(sym, period="5d", interval="1h", progress=False, timeout=10) # เพิ่ม timeout
-    if not df_h.empty:
-        res = analyze_coin_ai(sym, df_h)
-        if res:
-            all_results.append(res)
-            table_area.dataframe(pd.DataFrame(all_results).sort_values('Score', ascending=False), use_container_width=True)
+    status_area.info(f"🔍 AI กำลังวิเคราะห์: {sym}...")
+    try:
+        df_h = yf.download(sym, period="5d", interval="1h", progress=False, timeout=10)
+        if not df_h.empty:
+            res = analyze_coin_ai(sym, df_h)
+            if res:
+                all_results.append(res)
+    except Exception as e:
+        st.warning(f"ไม่สามารถดึงข้อมูล {sym} ได้: {e}")
+    
     progress_bar.progress((i + 1) / len(tickers))
-    time.sleep(0.5) # ลด jitter ให้เหลือสั้นๆ เพื่อเลี่ยง timeout
+    time.sleep(0.1)
+
+status_area.empty() # ล้างสถานะเมื่อเสร็จ
+
+# --- จุดสำคัญ: แสดงตารางสรุปหลังจากสแกนเสร็จ ---
+if all_results:
+    st.subheader("📊 AI Sniper Radar (Real-time Scans)")
+    scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
+    st.dataframe(scan_df, use_container_width=True)
+else:
+    st.error("❌ ไม่สามารถดึงข้อมูลเหรียญได้เลยในรอบนี้ กรุณากด Force Refresh หรือรอรอบถัดไป")
 
 # --- 6. ตัดสินใจและจบงาน ---
 # --- 6. ตัดสินใจซื้อ-ขาย (Logic) ---
@@ -147,4 +164,5 @@ if st.button("🔄 Force Refresh Now"):
 st.write("ระบบจะสแกนใหม่โดยอัตโนมัติในระยะเวลาอันสั้น...")
 time.sleep(30) # ลดเหลือ 30 วินาทีเพื่อเลี่ยง Health Check Fail
 st.rerun()
+
 
