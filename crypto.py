@@ -21,8 +21,8 @@ def get_sentiment_simple(symbol):
         if not news or len(news) == 0:
             return 0, "No recent news"
         
-        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch', 'ai']
-        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell']
+        pos_words = ['bullish', 'partnership', 'buy', 'gain', 'growth', 'upgrade', 'success', 'listing', 'launch', 'ai', 'pump', 'moon', 'breakout', 'ath', 'approved', 'integration', 'investment']
+        neg_words = ['bearish', 'hack', 'scam', 'fud', 'ban', 'drop', 'decline', 'investigation', 'risk', 'sell', 'dump', 'crash', 'liquidated', 'whale sell', 'reject', 'exploit', 'warning']
         
         score = 0
         latest_headline = "No headline found"
@@ -112,35 +112,48 @@ if sheet:
             current_qty = float(h_rows.iloc[-1]['จำนวน'])
 
 # --- 4. หน้า UI ---
-st.title("🦔 Pepper Hunter (Sniper Mode)")
+st.title("🦔 Pepper Hunter")
 st.write(f"💰 Balance: {current_bal:,.2f} ฿ | Target: 10,000 ฿")
 
 # --- 5. สแกนแบบ Sniper ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
 status_area = st.empty()
-status_area.info("📡 Sniper Radar กำลังซุ่มหาเหรียญเกรด A+...")
+status_area.info("📡 Radar กำลังวิเคราะห์ข้อมูลตลาดและข่าวล่าสุด...")
 
 try:
+    # ดึงข้อมูลรวดเดียวแบบ Bulk
     data = yf.download(tickers, period="7d", interval="1h", group_by='ticker', progress=False)
     if not data.empty:
         for sym in tickers:
             df_h = data[sym].dropna()
-            if not df_h.empty and len(df_h) >= 200:
-                res = analyze_coin_ai(sym, df_h)
-                if res: all_results.append(res)
-        status_area.success(f"🔍 สแกนเสร็จสิ้น (คัดเฉพาะเหรียญขาขึ้นเหนือเส้น EMA 200)")
+            # ส่งไปวิเคราะห์ (ถ้าไม่ผ่านเกณฑ์ EMA 200 จะได้คะแนนน้อย แต่เราจะให้แสดงผลออกมา)
+            res = analyze_coin_ai(sym, df_h)
+            if res:
+                all_results.append(res)
+            else:
+                # กรณีเหรียญไม่ผ่านเกณฑ์เบื้องต้น (เช่น อยู่ใต้เส้น 200) ให้แสดงสถานะเบื้องต้น
+                all_results.append({
+                    "Symbol": sym, "Price_USD": 0, "Score": 0, 
+                    "News_Score": 0, "Headline": "Under EMA 200 (Risk)",
+                    "Last_Update": datetime.now(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
+                })
+        status_area.success(f"🔍 สแกนเสร็จสิ้น! ข้อมูลอัปเดตเมื่อ: {datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M:%S')}")
 except Exception as e:
-    st.error(f"❌ Error: {str(e)}")
+    st.error(f"❌ การสแกนขัดข้อง: {str(e)}")
 
-# แสดงตาราง Radar
+# --- 🎯 ส่วนแสดงตาราง Radar ให้ User ดู ---
 if all_results:
-    st.subheader("🎯 เหรียญที่ผ่านเกณฑ์ Sniper (Score >= 80)")
+    st.subheader("📊 Radar Table")
+    # สร้าง DataFrame และเรียงคะแนนจากมากไปน้อย
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
-    st.table(scan_df[['Symbol', 'Price_USD', 'Score', 'News_Score', 'Headline']])
-else:
-    st.info("📉 ตลาดปัจจุบันยังไม่มีเหรียญผ่านเกณฑ์ Sniper (รอจังหวะที่ราคาอยู่เหนือ EMA 200 และข่าวเป็นบวก)")
-
+    
+    # ตกแต่งตารางให้ดูง่าย
+    st.table(scan_df[['Symbol', 'Score', 'News_Score', 'Last_Update', 'Headline']])
+    
+    # แจ้งเตือนเงื่อนไขการซื้อ
+    st.caption("💡 เงื่อนไขการซื้อ: Score ต้อง >= 80 (ขาขึ้นชัดเจน + ข่าวดี) และต้องไม่มีเหรียญอื่นถืออยู่")
+    
 # --- 6. ตัดสินใจซื้อ-ขาย ---
 now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
 
@@ -151,10 +164,10 @@ if not hunting_symbol:
         buy_p_thb = best_pick['Price_USD'] * live_rate
         qty = current_bal / buy_p_thb
         row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], 
-               current_bal, qty, "AI Sniper Buy", "ON", best_pick['News_Score'], best_pick['Headline']]
+               current_bal, qty, "Pepper Buy", "ON", best_pick['News_Score'], best_pick['Headline']]
         if sheet:
             sheet.append_row(row)
-            st.success(f"🎯 Sniper สอยเหรียญ: {best_pick['Symbol']}")
+            st.success(f"🎯 Pepper สอยเหรียญ: {best_pick['Symbol']}")
             time.sleep(2)
             st.rerun()
 else:
@@ -217,9 +230,10 @@ if not df_perf.empty:
 if st.button("🔄 Force Refresh Now"):
     st.rerun()
 
-st.write("⏱️ Sniper Cooldown (5 Min)...")
+st.write("⏱️ Pepper Cooldown (5 Min)...")
 countdown_placeholder = st.empty()
 for i in range(300, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
