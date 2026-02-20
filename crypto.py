@@ -43,17 +43,27 @@ def analyze_coin_ai(symbol, df):
         df = df.dropna()
         
         last_row = df.iloc[[-1]]
-        cur_p = float(last_row['Close'].iloc[0])
-        ema50 = float(last_row['EMA_50'].iloc[0])
+        cur_p_usd = float(last_row['Close'].iloc[0])
+        # แปลงเป็นบาทไทยทันที
+        cur_p_thb = cur_p_usd * live_rate 
+        
+        ema50_thb = float(last_row['EMA_50'].iloc[0]) * live_rate
         rsi_now = float(last_row['RSI_14'].iloc[0])
         
         score = 0
-        status = "🟢 Bullish" if cur_p > ema50 else "🔴 Bearish"
+        status = "🟢 Bullish" if cur_p_thb > ema50_thb else "🔴 Bearish"
         
-        if cur_p > ema50:
+        if cur_p_thb > ema50_thb:
             score += 50
         else:
-            return {"Symbol": symbol, "Price": cur_p, "Score": 10, "RSI": round(rsi_now, 2), "Trend": "Under EMA 50", "Headline": "Wait for Trend"}
+            return {
+                "Symbol": symbol, 
+                "Price (THB)": f"{cur_p_thb:,.2f}", # แสดงคอมม่าและทศนิยม
+                "Score": 10, 
+                "RSI": round(rsi_now, 2), 
+                "Trend": "Under EMA 50", 
+                "Headline": "Wait for Trend"
+            }
 
         if 40 < rsi_now < 65: score += 20
         n_score, n_headline = get_sentiment_simple(symbol)
@@ -61,8 +71,12 @@ def analyze_coin_ai(symbol, df):
         score += n_score
 
         return {
-            "Symbol": symbol, "Price": round(cur_p, 4), "Score": score, 
-            "RSI": round(rsi_now, 2), "Trend": status, "Headline": n_headline
+            "Symbol": symbol, 
+            "Price (THB)": f"{cur_p_thb:,.2f}", 
+            "Score": score, 
+            "RSI": round(rsi_now, 2), 
+            "Trend": status, 
+            "Headline": n_headline
         }
     except: return None
 
@@ -159,3 +173,4 @@ else:
 
 time.sleep(300)
 st.rerun()
+
