@@ -77,47 +77,44 @@ if sheet:
 st.title("🦔 Pepper Hunter")
 st.write(f"💰 Balance: {current_bal:,.2f} ฿ | Target: 10,000 ฿")
 
-# --- 5. สแกน (ลดความเสี่ยง Timeout) ---
-# --- 5. สแกน (ฉบับแก้ไขตารางไม่ขึ้น) ---
+# --- 5. สแกน (ฉบับแก้ไข Error curl_cffi) ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
-session = get_session() # เรียกใช้ session ที่เราสร้างไว้
 
-# ส่วนแสดงผลบนหน้าจอ
 status_area = st.empty()
 progress_bar = st.progress(0)
-get_session
+
 for i, sym in enumerate(tickers):
-    status_area.info(f"🔍 AI กำลังพยายามดึงข้อมูล: {sym}...")
+    status_area.info(f"🔍 AI กำลังตรวจสอบ: {sym}...")
     try:
-        # ดึงข้อมูลผ่าน session เพื่อเลี่ยงการโดนบล็อก
-        ticker_obj = yf.Ticker(sym, session=session)
-        df_h = ticker_obj.history(period="5d", interval="1h", timeout=15)
+        # ดึงข้อมูลแบบปกติที่สุด ไม่ต้องใช้ session
+        df_h = yf.download(sym, period="5d", interval="1h", progress=False, timeout=15)
         
         if not df_h.empty:
             res = analyze_coin_ai(sym, df_h)
             if res:
                 all_results.append(res)
         else:
-            st.warning(f"⚠️ {sym}: ข้อมูลว่างเปล่า (Yahoo ไม่ตอบสนอง)")
+            st.warning(f"⚠️ {sym}: ไม่พบข้อมูลในรอบนี้")
             
     except Exception as e:
-        st.error(f"❌ {sym}: เกิดข้อผิดพลาด {str(e)}")
+        # ถ้ายัง Error อีก จะได้รู้ว่าเป็นเพราะอะไร
+        st.error(f"❌ {sym}: {str(e)}")
     
     progress_bar.progress((i + 1) / len(tickers))
-    time.sleep(random.uniform(1.0, 3.0)) # สุ่มเวลาพักให้เหมือนมนุษย์
+    # พักสักนิดเพื่อไม่ให้โดนมองว่าเป็นสแปม
+    time.sleep(random.uniform(0.5, 1.5))
 
 status_area.empty()
 
-# แสดงผลตาราง
+# แสดงตารางผลลัพธ์
 if all_results:
     st.subheader("📊 AI Sniper Radar (Real-time Scans)")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
     st.dataframe(scan_df, use_container_width=True)
 else:
-    st.error("❌ ยังดึงข้อมูลไม่ได้ (IP อาจถูกบล็อกชั่วคราว) แนะนำให้รอ 10-15 นาทีแล้วค่อย Refresh ใหม่ครับ")
-
-# --- 6. ตัดสินใจและจบงาน ---
+    st.error("❌ ยังดึงข้อมูลไม่ได้ กรุณาลองกด Force Refresh อีกครั้ง")
+    
 # --- 6. ตัดสินใจซื้อ-ขาย (Logic) ---
 if all_results:
     now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
@@ -181,6 +178,7 @@ if st.button("🔄 Force Refresh Now"):
 st.write("ระบบจะสแกนใหม่โดยอัตโนมัติในระยะเวลาอันสั้น...")
 time.sleep(30) # ลดเหลือ 30 วินาทีเพื่อเลี่ยง Health Check Fail
 st.rerun()
+
 
 
 
