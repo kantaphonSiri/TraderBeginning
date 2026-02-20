@@ -111,7 +111,7 @@ else:
     st.info("🔎 สถานะ: กำลังสแกนหาจุดซื้อที่ดีที่สุด (Score >= 80)")
 
 # --- 5. ระบบ Radar (โชว์ตารางแบบ Real-time) ---
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "DOT-USD"]
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
 
 st.divider()
@@ -197,3 +197,4 @@ refresh_time = random.randint(60, 120)
 st.write(f"⏱️ ระบบสแกนเสร็จสิ้น จะเริ่มรอบใหม่ในอีก {refresh_time} วินาที...")
 time.sleep(refresh_time)
 st.rerun()
+
