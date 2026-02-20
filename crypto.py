@@ -25,7 +25,7 @@ def init_gsheet():
         sh = client.open("Blue-chip Bet")
         return sh.worksheet("trade_learning")
     except Exception as e:
-        st.error(f"❌ Google Sheet Connection Error: {e}")
+        st.error(f"❌ Google Sheet Error: {e}")
         return None
 
 def get_now_thailand():
@@ -33,6 +33,8 @@ def get_now_thailand():
 
 @st.cache_data(ttl=600)
 def get_live_exchange_rate():
+    # สุ่มหน่วงเวลาเล็กน้อยก่อนดึงค่าเงิน
+    time.sleep(random.uniform(0.5, 1.5))
     try:
         ticker = yf.Ticker("THB=X")
         return round(ticker.fast_info['last_price'], 2)
@@ -47,7 +49,6 @@ def analyze_coin_ai(symbol, df_history):
         df.ta.ema(length=50, append=True)
         df = df.dropna()
         
-        # Machine Learning (Predict Next Price)
         X = df[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].iloc[:-1]
         y = df['Close'].shift(-1).iloc[:-1]
         model = RandomForestRegressor(n_estimators=30, random_state=42)
@@ -63,16 +64,19 @@ def analyze_coin_ai(symbol, df_history):
         pred_p = model.predict(last_row[['Close', 'RSI_14', 'EMA_20', 'EMA_50']].values)[0]
         if pred_p > cur_p: score += 20
         
-        return {"Symbol": symbol, "Price_USD": cur_p, "Score": score}
+        return {
+            "Symbol": symbol, 
+            "Price_USD": cur_p, 
+            "Score": score, 
+            "Last_Update": datetime.now(timezone(timedelta(hours=7))).strftime("%H:%M:%S")
+        }
     except: return None
 
-# --- 3. ดึงข้อมูลจาก Google Sheet เพื่อวิเคราะห์ต่อ ---
+# --- 3. เตรียมข้อมูลพื้นฐาน ---
 sheet = init_gsheet()
 live_rate = get_live_exchange_rate()
-current_bal = 1000.0  # ทุนเริ่มต้นกรณีไม่มีข้อมูลใน Sheet
-hunting_symbol = None
-entry_price_thb = 0
-current_qty = 0
+current_bal = 1000.0
+hunting_symbol, entry_price_thb, current_qty = None, 0, 0
 df_perf = pd.DataFrame()
 
 if sheet:
@@ -81,96 +85,85 @@ if sheet:
         if recs:
             df_perf = pd.DataFrame(recs)
             if not df_perf.empty:
-                # ดึง Balance ล่าสุดมาเป็นทุนไม้ถัดไป (Auto-Compound)
                 last_row_data = df_perf.iloc[-1]
                 if 'Balance' in df_perf.columns and last_row_data['Balance'] != "":
                     current_bal = float(last_row_data['Balance'])
-                
-                # ตรวจสอบว่ากำลังถือเหรียญอะไรอยู่หรือไม่
                 h_rows = df_perf[df_perf['สถานะ'] == 'HUNTING']
                 if not h_rows.empty:
                     hunting_symbol = h_rows.iloc[-1]['เหรียญ']
                     entry_price_thb = float(h_rows.iloc[-1]['ราคาซื้อ(฿)'])
                     current_qty = float(h_rows.iloc[-1]['จำนวน'])
     except Exception as e:
-        st.warning(f"⚠️ ดึงข้อมูลจาก Sheet พลาด: {e}")
+        st.warning(f"⚠️ ดึงข้อมูล Sheet ไม่สำเร็จ: {e}")
 
-# --- 4. Dashboard ส่วนแสดงผล ---
+# --- 4. Dashboard UI ---
 st.title("🦔 Pepper Hunter")
-st.subheader(f"เป้าหมาย: 10,000 ฿ | ปัจจุบัน: {current_bal:,.2f} ฿")
+st.subheader(f"💰 พอร์ตปัจจุบัน: {current_bal:,.2f} ฿ | เป้าหมาย: 10,000 ฿")
 
-# --- 5. ระบบ Radar สแกนตลาด ---
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
+# --- 5. ระบบ Radar (พร้อมระบบป้องกัน Bot Detection) ---
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "DOT-USD"]
 all_results = []
 
-with st.spinner("AI กำลังวิเคราะห์ข้อมูลรายชั่วโมง..."):
-    for sym in tickers:
+st.divider()
+st.subheader("📊 AI Sniper Radar (Real-time Scans)")
+placeholder = st.empty()
+progress_bar = st.progress(0)
+
+for i, sym in enumerate(tickers):
+    # เทคนิค Anti-Bot: สุ่มเวลาหน่วง (Jittering) ระหว่างการดึงข้อมูลแต่ละเหรียญ
+    jitter = random.uniform(1.2, 3.5)
+    with st.spinner(f"กำลังวิเคราะห์ {sym}... (Human Simulation {jitter:.1f}s)"):
+        time.sleep(jitter)
+        
+        # ดึงข้อมูลผ่าน yfinance
         df_h = yf.download(sym, period="7d", interval="1h", progress=False)
+        
         if not df_h.empty:
             res = analyze_coin_ai(sym, df_h)
             if res:
                 all_results.append(res)
-
-if all_results:
-    scan_df = pd.DataFrame(all_results).sort_values(by='Score', ascending=False)
-    st.dataframe(scan_df, use_container_width=True)
-
-    if sheet:
-        now_str = get_now_thailand()
+                # แสดงตารางพร้อม Last_Update ทันที
+                current_df = pd.DataFrame(all_results).sort_values(by='Score', ascending=False)
+                placeholder.dataframe(current_df, use_container_width=True)
         
-        # --- [BUY LOGIC] ---
-        if not hunting_symbol:
-            best_pick = all_results[0] if all_results[0]['Score'] >= 80 else None
-            if best_pick:
-                buy_p_thb = best_pick['Price_USD'] * live_rate
-                qty = current_bal / buy_p_thb
-                row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], current_bal, qty, "AI Sniper Buy", "ON"]
-                sheet.append_row(row)
-                st.success(f"🎯 ซื้อเหรียญเดียวเน้นๆ: {best_pick['Symbol']}")
+    progress_bar.progress((i + 1) / len(tickers))
+
+# --- 6. Logic การตัดสินใจ ---
+if all_results:
+    now_str = get_now_thailand()
+    if not hunting_symbol:
+        best_pick = all_results[0] if all_results[0]['Score'] >= 80 else None
+        if best_pick:
+            buy_p_thb = best_pick['Price_USD'] * live_rate
+            qty = current_bal / buy_p_thb
+            row = [now_str, best_pick['Symbol'], "HUNTING", buy_p_thb, 0, "0%", best_pick['Score'], current_bal, qty, "AI Sniper Buy", "ON"]
+            if sheet: sheet.append_row(row)
+            st.success(f"🎯 ซื้อสำเร็จ: {best_pick['Symbol']}")
+            st.rerun()
+    else:
+        # ระบบเช็คกำไร Real-time
+        current_coin = next((r for r in all_results if r['Symbol'] == hunting_symbol), None)
+        if current_coin:
+            cur_p_thb = current_coin['Price_USD'] * live_rate
+            profit = ((cur_p_thb - entry_price_thb) / entry_price_thb) * 100
+            st.info(f"📍 ถืออยู่: {hunting_symbol} | กำไรปัจจุบัน: {profit:.2f}%")
+            
+            # Logic ขาย (เหมือนเดิม)
+            if profit >= 8.0 or profit <= -4.0 or (0.2 < profit < 1.0 and current_coin['Score'] < 50):
+                new_bal = current_qty * cur_p_thb
+                row = [now_str, hunting_symbol, "SOLD", entry_price_thb, cur_p_thb, f"{profit:.2f}%", current_coin['Score'], new_bal, 0, "AI Auto Sell", "ON"]
+                if sheet: sheet.append_row(row)
+                st.balloons()
                 st.rerun()
-            else:
-                st.info("⌛ รอสัญญาณ Score >= 80 เพื่อความปลอดภัยของเงินต้น")
 
-        # --- [SELL LOGIC: เน้นไม่ขาดทุนจากทุนเดิม] ---
-        else:
-            current_coin = next((r for r in all_results if r['Symbol'] == hunting_symbol), None)
-            if current_coin:
-                current_p_thb = current_coin['Price_USD'] * live_rate
-                profit_pct = ((current_p_thb - entry_price_thb) / entry_price_thb) * 100
-                new_total_bal = current_qty * current_p_thb
-                
-                sell_trigger = False
-                headline = ""
-
-                # 1. ขายทำกำไร (Take Profit 8-10%)
-                if profit_pct >= 8.0:
-                    sell_trigger = True
-                    headline = "Take Profit (Success)"
-                
-                # 2. ป้องกันเงินต้น (No-Loss Exit) 
-                # ถ้ากำไรเคยขึ้นไปแล้ว และกำลังจะร่วงกลับมาที่ทุน (เหลือกำไรแค่ 0.5%) ให้ขายทิ้งทันที
-                elif 0.2 < profit_pct < 1.0 and current_coin['Score'] < 50:
-                    sell_trigger = True
-                    headline = "No-Loss Exit (Protect Capital)"
-                
-                # 3. Stop Loss เมื่อผิดทางรุนแรง
-                elif profit_pct <= -4.0:
-                    sell_trigger = True
-                    headline = "Stop Loss (Safety First)"
-
-                if sell_trigger:
-                    row = [now_str, hunting_symbol, "SOLD", entry_price_thb, current_p_thb, f"{profit_pct:.2f}%", current_coin['Score'], new_total_bal, 0, headline, "ON"]
-                    sheet.append_row(row)
-                    st.warning(f"💰 {headline}: {hunting_symbol} กำไร {profit_pct:.2f}%")
-                    st.rerun()
-
-            # แสดงสถานะปัจจุบัน
-            st.info(f"📍 กำลังถือ: {hunting_symbol} | ทุน: {entry_price_thb:,.2f} ฿ | กำไรตอนนี้: {profit_pct:.2f}%")
-
-# กราฟพอร์ต
+# --- 7. กราฟ ---
+st.divider()
 if not df_perf.empty:
+    st.subheader("📈 Performance Growth")
     st.line_chart(df_perf['Balance'])
 
-time.sleep(60)
+# สุ่มเวลา Refresh ครั้งใหญ่ เพื่อไม่ให้เป็นแพทเทิร์นบอทเกินไป
+refresh_time = random.randint(60, 120)
+st.write(f"⏱️ ระบบจะสแกนใหม่ในอีก {refresh_time} วินาที...")
+time.sleep(refresh_time)
 st.rerun()
-
