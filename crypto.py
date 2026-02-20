@@ -193,8 +193,32 @@ if all_results:
                     st.rerun()
 
 st.divider()
+# --- ส่วนแสดงกราฟ (ปรับปรุงใหม่ให้ดูง่าย) ---
+st.divider()
 if not df_perf.empty and 'Balance' in df_perf.columns:
-    st.line_chart(df_perf['Balance'])
+    st.subheader("📈 พอร์ตการลงทุน (Balance Growth)")
+    
+    # เตรียมข้อมูลสำหรับกราฟ
+    chart_data = df_perf[['วันที่/เวลา', 'Balance']].copy()
+    
+    # แปลง Timestamp ให้เป็นรูปแบบวันที่ที่อ่านง่าย
+    chart_data['วันที่/เวลา'] = pd.to_datetime(chart_data['วันที่/เวลา'], dayfirst=True)
+    chart_data = chart_data.set_index('วันที่/เวลา')
+    
+    # แสดงกราฟเส้นพร้อมจุด Markers
+    st.line_chart(chart_data, y="Balance", width='stretch')
+    
+    # คำนวณกำไรสะสมเป็น %
+    initial_fund = 1000.0
+    total_profit_pct = ((current_bal - initial_fund) / initial_fund) * 100
+    
+    # แสดงสถิติสรุปใต้กราฟ
+    c1, c2, c3 = st.columns(3)
+    c1.metric("งบปัจจุบัน", f"{current_bal:,.2f} ฿")
+    c2.metric("กำไรสะสม", f"{total_profit_pct:.2f} %", delta=f"{current_bal - initial_fund:,.2f} ฿")
+    c3.metric("สถานะบอท", "ACTIVE ✅")
+else:
+    st.info("📊 กราฟจะแสดงผลเมื่อมีการบันทึกประวัติการซื้อ-ขายลงใน Sheet")
 
 if st.button("🔄 Force Refresh Now"):
     st.rerun()
@@ -206,5 +230,6 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
+
 
 
