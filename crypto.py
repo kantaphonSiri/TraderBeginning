@@ -132,7 +132,7 @@ with st.spinner("📡 Radar scanning..."):
         if res: all_results.append(res)
 
 if all_results:
-    st.subheader("📊 Professional Radar Table")
+    st.subheader("📊 Radar Table")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
     # แสดงตารางให้ User ดู
     st.dataframe(scan_df, use_container_width=True)
@@ -173,4 +173,5 @@ else:
 
 time.sleep(300)
 st.rerun()
+
 
