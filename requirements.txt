@@ -1,7 +1,7 @@
 streamlit>=1.31.0
 pandas
 pandas_ta
-yfinance
+yfinance>=0.2.40
 scikit-learn
 gspread
 google-auth
@@ -9,3 +9,4 @@ streamlit-autorefresh
 protobuf==3.20.3
 textblob
 plotly
+
