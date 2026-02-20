@@ -165,18 +165,6 @@ if all_results:
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
     st.dataframe(scan_df[['Symbol', 'Price_USD', 'Score', 'News_Score', 'Headline']], width='stretch')
 
-# --- ส่วนแสดงสถานะการสแกน (Radar) ---
-st.write(f"🔍 **Pepper:** กำลังตรวจสอบ {len(symbols)} เหรียญเป้าหมาย...")
-
-if all_results_sorted:
-    # แสดงตารางเฉพาะเหรียญที่สอบผ่าน
-    df_display = pd.DataFrame(all_results_sorted)
-    st.subheader("🎯 เหรียญที่ผ่านเกณฑ์ Sniper (Score >= 85)")
-    st.table(df_display[['Symbol', 'Price_USD', 'Score', 'News_Score', 'Headline']])
-else:
-    # ถ้าไม่มีใครผ่านเกณฑ์ ให้แสดงข้อความปลอบใจ
-    st.info("📉 ตลาดปัจจุบันยังไม่เข้าเงื่อนไข Sniper (รอจังหวะราคาพุ่งเหนือ EMA 200)")
-
 # --- 6. ตัดสินใจซื้อ-ขาย ---
 if all_results:
     now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
@@ -263,11 +251,3 @@ for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 st.rerun()
-
-
-
-
-
-
-
-
