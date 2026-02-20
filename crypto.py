@@ -155,11 +155,15 @@ if not df_perf.empty and 'Balance' in df_perf.columns:
 # --- 7. ระบบ Cooldown และ Auto Refresh ---
 if st.button("🔄 Force Refresh Now"):
     st.rerun()
-    
+
+st.write("⏱️ ระบบความปลอดภัย: กำลังรอรอบถัดไป...")
+countdown_placeholder = st.empty()
+
 wait_time = 300 # 5 นาที
 for i in range(wait_time, 0, -10):
     countdown_placeholder.write(f"⏳ จะเริ่มสแกนใหม่ในอีก {i} วินาที...")
     time.sleep(10) 
 
 st.rerun()
+
 
