@@ -8,7 +8,17 @@ import random
 from google.oauth2.service_account import Credentials
 from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime, timedelta, timezone
+import requests
+from requests import Session
 
+# สร้าง Session เพื่อใช้ดึงข้อมูลให้ดูเป็นธรรมชาติ
+def get_session():
+    session = Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+    return session
+    
 # --- 1. ตั้งค่าหน้าจอ ---
 st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide")
 
@@ -71,34 +81,41 @@ st.write(f"💰 Balance: {current_bal:,.2f} ฿ | Target: 10,000 ฿")
 # --- 5. สแกน (ฉบับแก้ไขตารางไม่ขึ้น) ---
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 all_results = []
+session = get_session() # เรียกใช้ session ที่เราสร้างไว้
 
 # ส่วนแสดงผลบนหน้าจอ
 status_area = st.empty()
 progress_bar = st.progress(0)
-
+get_session
 for i, sym in enumerate(tickers):
-    status_area.info(f"🔍 AI กำลังวิเคราะห์: {sym}...")
+    status_area.info(f"🔍 AI กำลังพยายามดึงข้อมูล: {sym}...")
     try:
-        df_h = yf.download(sym, period="5d", interval="1h", progress=False, timeout=10)
+        # ดึงข้อมูลผ่าน session เพื่อเลี่ยงการโดนบล็อก
+        ticker_obj = yf.Ticker(sym, session=session)
+        df_h = ticker_obj.history(period="5d", interval="1h", timeout=15)
+        
         if not df_h.empty:
             res = analyze_coin_ai(sym, df_h)
             if res:
                 all_results.append(res)
+        else:
+            st.warning(f"⚠️ {sym}: ข้อมูลว่างเปล่า (Yahoo ไม่ตอบสนอง)")
+            
     except Exception as e:
-        st.warning(f"ไม่สามารถดึงข้อมูล {sym} ได้: {e}")
+        st.error(f"❌ {sym}: เกิดข้อผิดพลาด {str(e)}")
     
     progress_bar.progress((i + 1) / len(tickers))
-    time.sleep(0.1)
+    time.sleep(random.uniform(1.0, 3.0)) # สุ่มเวลาพักให้เหมือนมนุษย์
 
-status_area.empty() # ล้างสถานะเมื่อเสร็จ
+status_area.empty()
 
-# --- จุดสำคัญ: แสดงตารางสรุปหลังจากสแกนเสร็จ ---
+# แสดงผลตาราง
 if all_results:
     st.subheader("📊 AI Sniper Radar (Real-time Scans)")
     scan_df = pd.DataFrame(all_results).sort_values('Score', ascending=False)
     st.dataframe(scan_df, use_container_width=True)
 else:
-    st.error("❌ ไม่สามารถดึงข้อมูลเหรียญได้เลยในรอบนี้ กรุณากด Force Refresh หรือรอรอบถัดไป")
+    st.error("❌ ยังดึงข้อมูลไม่ได้ (IP อาจถูกบล็อกชั่วคราว) แนะนำให้รอ 10-15 นาทีแล้วค่อย Refresh ใหม่ครับ")
 
 # --- 6. ตัดสินใจและจบงาน ---
 # --- 6. ตัดสินใจซื้อ-ขาย (Logic) ---
@@ -164,5 +181,6 @@ if st.button("🔄 Force Refresh Now"):
 st.write("ระบบจะสแกนใหม่โดยอัตโนมัติในระยะเวลาอันสั้น...")
 time.sleep(30) # ลดเหลือ 30 วินาทีเพื่อเลี่ยง Health Check Fail
 st.rerun()
+
 
 
