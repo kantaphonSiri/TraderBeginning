@@ -146,9 +146,9 @@ if not df_perf.empty:
     # เพิ่มเส้นเป้าหมาย 10,000 เข้าไปเปรียบเทียบ
     try:
         chart_data = df_perf.copy()
-        chart_data = chart_data[['วันที่/เวลา', 'Balance']]
+        chart_data = chart_data[['วันที่', 'Balance']]
         chart_data['Goal'] = 10000
-        chart_data = chart_data.set_index('วันที่/เวลา')
+        chart_data = chart_data.set_index('วันที่')
         
         st.line_chart(chart_data) # แสดงทั้งเงินปัจจุบันและเส้นชัย
     except:
@@ -157,3 +157,4 @@ if not df_perf.empty:
 # (ส่วน Loop ท้ายไฟล์คงเดิม)
 time.sleep(300)
 st.rerun()
+
