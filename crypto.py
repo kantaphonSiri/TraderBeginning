@@ -135,31 +135,35 @@ if all_results:
     }), use_container_width=True)
 
 # --- 7. การตัดสินใจซื้อ (เลือกตัวที่ Best ที่สุด) ---
+# --- 7. การตัดสินใจซื้อ (ฉบับแก้ไข Error JSON) ---
 now_str = datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S")
 
 if not hunting_symbol and all_results:
-    # เลือกตัวที่ Score สูงที่สุดตัวเดียว
     best_coin = scan_df.iloc[0] 
     if best_coin['Score'] >= 80:
-        row = [now_str, best_coin['Symbol'], "HUNTING", best_coin['Market Price (฿)'], 0, "0%", best_coin['Score'], 
-               current_bal, best_coin['You will Get (Qty)'], "Best Score Pick", "ON", 0, best_coin['News']]
-        sheet.append_row(row)
-        st.success(f"🚀 Pepper เลือกตัวที่ดีที่สุดแล้ว: {best_coin['Symbol']}")
-        st.rerun()
-
-elif hunting_symbol:
-    # ส่วนการขาย (คงเดิม)
-    curr_data = yf.download(hunting_symbol, period="1d", interval="1m", progress=False).iloc[-1]
-    cur_p_thb = float(curr_data['Close']) * live_rate
-    profit_pct = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
-    st.warning(f"📍 กำลังล่ากำไรจาก: {hunting_symbol} | ปัจจุบัน: {profit_pct:.2f}%")
-    
-    if profit_pct >= 5.0 or (profit_pct < -3.0): # Take Profit 5% หรือ Stop Loss -3%
-        new_bal = current_qty * cur_p_thb
-        row = [now_str, hunting_symbol, "SOLD", entry_p_thb, cur_p_thb, f"{profit_pct:.2f}%", 0, new_bal, 0, "Closed", "ON"]
-        sheet.append_row(row)
-        st.balloons()
-        st.rerun()
+        # บังคับแปลงค่าทุกอย่างให้เป็น Type พื้นฐานที่ Google Sheet รับได้
+        row = [
+            str(now_str),                               # วันเวลา (String)
+            str(best_coin['Symbol']),                  # ชื่อเหรียญ (String)
+            "HUNTING",                                  # สถานะ (String)
+            float(best_coin['Market Price (฿)']),     # ราคาซื้อ (Float)
+            0.0,                                        # ราคาขายเริ่มต้น (Float)
+            "0%",                                       # กำไร (String)
+            int(best_coin['Score']),                   # คะแนน (Int)
+            float(current_bal),                         # ยอดเงิน (Float)
+            float(best_coin['You will Get (Qty)']),    # จำนวนเหรียญ (Float)
+            "v3 RSS Entry",                             # หมายเหตุ (String)
+            "ON",                                       # Switch (String)
+            0,                                          # ลำดับ (Int)
+            str(best_coin['News'])                     # ข่าว (String)
+        ]
+        
+        try:
+            sheet.append_row(row)
+            st.success(f"🎯 Pepper สอยแล้ว: {best_coin['Symbol']} ({best_coin['Market Price (฿)']:,.2f} ฿)")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ เกิดข้อผิดพลาดตอนบันทึกข้อมูล: {e}")
 
 # --- 8. กราฟ ---
 if not df_perf.empty:
@@ -170,3 +174,4 @@ if not df_perf.empty:
 
 time.sleep(300)
 st.rerun()
+
