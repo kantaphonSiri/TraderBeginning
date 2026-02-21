@@ -91,7 +91,7 @@ if sheet:
         st.error(f"Data Error: {e}")
 
 # --- 4. DASHBOARD UI ---
-st.title("🦔 Pepper Hunter PRO")
+st.title("🦔 Pepper Hunter")
 
 # Top Metrics
 c1, c2, c3, c4 = st.columns(4)
@@ -144,3 +144,4 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
