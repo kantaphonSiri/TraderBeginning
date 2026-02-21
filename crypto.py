@@ -81,7 +81,7 @@ if sheet:
             if status == 'HUNTING' and hunting_symbol:
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
                 if not ticker.empty:
-                    cur_p = float(ticker['Close'].iloc[-1]) * live_rate
+                    cur_p = float(ticker['Close'].values[-1]) * live_rate
                     pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
                     if pnl >= 5.0 or pnl <= -3.0:
                         new_bal = current_total_bal * (1 + (pnl / 100))
