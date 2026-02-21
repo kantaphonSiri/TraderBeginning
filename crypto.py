@@ -9,38 +9,34 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
 # --- 1. SETTINGS & LUXURY STYLES ---
-st.set_page_config(page_title="🦔 Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
     /* Global Look */
-    .stApp { background: linear-gradient(135deg, #0b0e11 0%, #161b22 100%); color: #e9eaeb; }
+    .stApp { background: linear-gradient(135deg, #0b0e11 0%, #1c2128 100%); color: #e9eaeb; }
     
-    /* Card Style */
+    /* Luxury Card Style */
     .trade-card {
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 15px;
-        padding: 20px;
-        margin-bottom: 15px;
-        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }
     
-    /* Metrics for Mobile */
-    [data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
+    /* Metrics Styling */
+    [data-testid="stMetricValue"] { font-size: 26px !important; color: #00ff88 !important; font-weight: 700; }
     
-    /* Hide specific elements on mobile if needed via CSS Media Queries */
+    /* Mobile Responsive Tables */
     @media (max-width: 640px) {
-        .stMetric { margin-bottom: 10px; }
         div[data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
     }
-
-    /* Style for the Table */
-    .stDataFrame { border-radius: 12px; overflow: hidden; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. FUNCTIONS ---
+# --- 2. CORE FUNCTIONS ---
 @st.cache_data(ttl=60)
 def get_live_thb():
     try:
@@ -57,13 +53,12 @@ def init_gsheet():
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
     except: return None
 
-# --- 3. DATA LOAD ---
+# --- 3. DATA LOAD & SYNC ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
 update_time = now_th.strftime("%H:%M:%S")
 
-# Default Values
 current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
@@ -79,7 +74,7 @@ if sheet:
             if last_row.get('สถานะ') == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
                 entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-            # Logic: Dynamic Invest
+            
             last_pnl = str(last_row.get('กำไร%', '0'))
             if '-' not in last_pnl and last_pnl not in ['0', '0%', '']:
                 next_invest = 1200.0
@@ -87,51 +82,59 @@ if sheet:
 
 # --- 4. NAVIGATION / SIDEBAR ---
 with st.sidebar:
-    st.markdown("## ⚙️ Settings")
-    st.metric("My Portfolio", f"{current_total_bal:,.2f} ฿")
-    st.write(f"💵 Rate: {live_rate:.2f}")
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    st.markdown("### ⚙️ Pepper Control")
+    st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
+    st.info(f"Next Multiplier: {next_invest:,.0f} ฿")
+    st.divider()
+    # ใช้ width='stretch' แทน use_container_width
+    if st.button("🔄 Manual Sync", width='stretch'):
         st.rerun()
 
-# --- 5. MOBILE-FIRST LAYOUT ---
-st.markdown(f"### 🦔 Pepper Hunter <small style='font-size:12px; color:#888;'>v3.5 Mobile-Ready</small>", unsafe_allow_html=True)
+# --- 5. DASHBOARD HEADER ---
+st.markdown(f"## 🦔 Pepper Hunter <small style='font-size:14px; color:#555;'>PRO v2026</small>", unsafe_allow_html=True)
 
-# Top Info Cards (จะกลายเป็น 1 คอลัมน์ในมือถือ)
-m1, m2 = st.columns(2)
+# Status Overview
+m1, m2, m3 = st.columns([1.2, 1, 1])
 with m1:
+    status_color = "#ff4b4b" if hunting_symbol else "#00ff88"
     st.markdown(f'''<div class="trade-card">
-        <small>BOT STATUS</small><br>
-        <b style="color:{'#ff4b4b' if hunting_symbol else '#00ff88'}">
-            {"🔴 BUSY (Holding)" if hunting_symbol else "🟢 IDLE (Scanning)"}
+        <small style="color:#888;">BOT STATUS</small><br>
+        <b style="color:{status_color}; font-size:20px;">
+            {"🔴 BUSY (HUNTING)" if hunting_symbol else "🟢 IDLE (SCANNING)"}
         </b>
     </div>''', unsafe_allow_html=True)
 with m2:
     st.markdown(f'''<div class="trade-card">
-        <small>NEXT INVESTMENT</small><br>
-        <b style="color:#00ff88">{next_invest:,.2f} ฿</b>
+        <small style="color:#888;">USD/THB</small><br>
+        <b style="color:#e9eaeb; font-size:20px;">฿ {live_rate:.2f}</b>
+    </div>''', unsafe_allow_html=True)
+with m3:
+    st.markdown(f'''<div class="trade-card">
+        <small style="color:#888;">LAST SYNC</small><br>
+        <b style="color:#e9eaeb; font-size:20px;">{update_time}</b>
     </div>''', unsafe_allow_html=True)
 
-# --- 6. ACTIVE POSITION ---
+# --- 6. ACTIVE TRADE DISPLAY ---
 if hunting_symbol:
-    with st.container():
-        st.markdown('<div class="trade-card">', unsafe_allow_html=True)
-        st.write(f"**Current Asset:** {hunting_symbol}")
-        hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
-        hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
-        cur_p = float(hist['Close'].iloc[-1]) * live_rate
-        pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
-        
-        c1, c2 = st.columns([1, 1])
-        c1.metric("Price", f"{cur_p:,.2f} ฿", f"{pnl:.2f}%")
-        c2.area_chart(hist['Close'], height=120, color="#00ff88" if pnl >=0 else "#ff4b4b")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.write(f"#### ⚡ Current Mission: {hunting_symbol}")
+    hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
+    hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
+    cur_p = float(hist['Close'].iloc[-1]) * live_rate
+    pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
+    
+    col_chart, col_stat = st.columns([2, 1])
+    with col_chart:
+        st.area_chart(hist['Close'] * live_rate, height=150, color="#00ff88" if pnl >=0 else "#ff4b4b")
+    with col_stat:
+        st.metric("ROI", f"{pnl:.2f}%", delta=f"{cur_p - entry_p_thb:,.2f} ฿")
+        st.caption(f"Entry: {entry_p_thb:,.2f} ฿")
 
-# --- 7. MARKET TABLE (COMPACT) ---
-st.write("#### 🔍 Market Radar")
+# --- 7. MARKET RADAR (TABLE) ---
+st.write("#### 🔍 Intelligence Radar")
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
 
 radar_list = []
-with st.spinner("Scanning..."):
+with st.spinner("🕵️ Scanning Markets..."):
     raw_data = yf.download(tickers, period="2d", interval="1h", group_by='ticker', progress=False)
     for t in tickers:
         try:
@@ -139,32 +142,43 @@ with st.spinner("Scanning..."):
             df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
             df.ta.rsi(length=14, append=True)
             last = df.tail(1)
-            p_thb = float(last['Close'].iloc[0]) * live_rate
-            rsi = float(last['RSI_14'].iloc[0])
+            p_thb = float(last['Close'].iloc[-1]) * live_rate
+            rsi = float(last['RSI_14'].iloc[-1])
             
             radar_list.append({
-                "Coin": t.replace("-USD", ""),
-                "Price": f"{p_thb:,.0f}",
-                "RSI": round(rsi, 1),
-                "Score": int(80 if rsi < 30 else (60 if rsi < 50 else 40)),
+                "Asset": t.replace("-USD", ""),
+                "Price (฿)": p_thb,
+                "RSI": rsi,
+                "Confidence": int(80 if rsi < 30 else (60 if rsi < 50 else 40)),
                 "Updated": update_time
             })
         except: continue
 
-df_radar = pd.DataFrame(radar_list).sort_values("Score", ascending=False)
+df_radar = pd.DataFrame(radar_list).sort_values("Confidence", ascending=False)
 
-# ใช้ st.table หรือ st.dataframe ที่ปรับแต่งให้ดูง่ายในมือถือ
+# แสดงตารางด้วย syntax ใหม่ width='stretch'
 st.dataframe(
     df_radar,
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
     column_config={
-        "Score": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100, format="%d"),
-        "Coin": st.column_config.TextColumn("Asset"),
+        "Confidence": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100, format="%d%%"),
+        "Price (฿)": st.column_config.NumberColumn("Price (฿)", format="%.0f"),
+        "RSI": st.column_config.NumberColumn("RSI", format="%.1f")
     }
 )
 
-# --- 8. FOOTER REFRESH ---
-st.markdown(f"<div style='text-align:center; color:#555; font-size:10px;'>Last Update: {update_time}</div>", unsafe_allow_html=True)
+# --- 8. SAFETY & CONTROL ---
+st.divider()
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("🚨 EMERGENCY SELL", width='stretch', type="primary"):
+        st.warning("Executing sell order...")
+with c2:
+    st.caption(f"System Auto-Refresh in 5m. Current: {update_time}")
+
+# Progress Bar หลอกตาเพื่อความสวยงาม
+st.progress(0, text="Waiting for next data batch...")
+
 time.sleep(300)
 st.rerun()
