@@ -47,18 +47,7 @@ def init_gsheet():
     except: return None
 
 # --- 3. DATA LOAD & AUTO-EXIT SYSTEM ---
-sheet = init_gsheet()
-live_rate = get_live_thb()
-now_th = datetime.now(timezone(timedelta(hours=7)))
-update_time = now_th.strftime("%H:%M:%S")
-
-current_total_bal = 1000.0
-hunting_symbol, entry_p_thb = None, 0.0
-next_invest = 1000.0
-
-TP_PCT = 5.0
-SL_PCT = -3.0
-
+# --- แก้ไขส่วนที 3. DATA LOAD & AUTO-EXIT SYSTEM ---
 if sheet:
     try:
         recs = sheet.get_all_records()
@@ -67,13 +56,19 @@ if sheet:
             df_perf.columns = df_perf.columns.str.strip()
             last_row = df_perf.iloc[-1]
             
+            # --- ดึงข้อมูลจากคอลัมน์ใหม่ ---
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
             hunting_symbol = last_row.get('เหรียญ')
             entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
             
+            # ดึงเงินลงทุนจริงของไม้นี้จากคอลัมน์ "เงินลงทุน(฿)"
+            # ถ้าไม่มีข้อมูล ให้ใช้ค่าจาก Balance หรือ 1000 เป็นตัวสำรอง
+            next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
+            
+            # ตรวจสอบการทบทุน (ถ้าไม้ล่าสุดกำไร ไม้ถัดไปตั้งเป้า 1200)
             last_pnl_str = str(last_row.get('กำไร%', '0'))
-            if '-' not in last_pnl_str and last_pnl_str not in ['0', '0%', '']:
+            if status == 'CLOSED' and '-' not in last_pnl_str and last_pnl_str not in ['0', '0%', '']:
                 next_invest = 1200.0
 
             if status == 'HUNTING' and hunting_symbol:
@@ -83,14 +78,33 @@ if sheet:
                     pnl_now = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
                     
                     if pnl_now >= TP_PCT or pnl_now <= SL_PCT:
+                        # คำนวณยอดเงินใหม่
                         new_bal = current_total_bal * (1 + (pnl_now / 100))
+                        
+                        # --- ปรับ exit_row ให้ตรงกับ 14 คอลัมน์ใหม่ของเจ้านาย ---
+                        # 1.วันที่ | 2.เหรียญ | 3.สถานะ | 4.ราคาซื้อ(฿) | 5.เงินลงทุน(฿) 
+                        # 6.ราคาขาย(฿) | 7.กำไร% | 8.Score | 9.Balance | 10.จำนวน 
+                        # 11.Headline | 12.Bot_Status | 13.News_Sentiment | 14.News_Headline
+                        
+                        units_held = next_invest / entry_p_thb
+                        
                         exit_row = [
-                            now_th.strftime("%Y-%m-%d %H:%M"), 
-                            hunting_symbol, "CLOSED", entry_p_thb, 
-                            cur_p_thb, f"{pnl_now:.2f}%", 0, new_bal, 
-                            0, "ALGO_AUTO_EXIT", "DONE", "N/A", 
-                            f"System Exit at {pnl_now:.2f}%"
+                            now_th.strftime("%Y-%m-%d %H:%M"), # 1. วันที่
+                            hunting_symbol,                    # 2. เหรียญ
+                            "CLOSED",                          # 3. สถานะ
+                            entry_p_thb,                       # 4. ราคาซื้อ(฿)
+                            next_invest,                       # 5. เงินลงทุน(฿)
+                            cur_p_thb,                         # 6. ราคาขาย(฿)
+                            f"{pnl_now:.2f}%",                 # 7. กำไร%
+                            0,                                 # 8. Score
+                            new_bal,                           # 9. Balance
+                            0,                                 # 10. จำนวน (ปิดไม้แล้วเหลือ 0)
+                            "ALGO_AUTO_EXIT",                  # 11. Headline
+                            "DONE",                            # 12. Bot_Status
+                            "N/A",                             # 13. News_Sentiment
+                            f"System Exit at {pnl_now:.2f}%"   # 14. News_Headline
                         ]
+                        
                         sheet.append_row(exit_row)
                         st.balloons()
                         st.success(f"🤖 AUTO-CLOSED: {hunting_symbol} at {pnl_now:.2f}%")
@@ -213,3 +227,4 @@ st.progress(0, text=f"Auto-refreshing in 5m... Status: Monitoring {hunting_symbo
 
 time.sleep(300)
 st.rerun()
+
