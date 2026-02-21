@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
 # --- 1. SETTINGS & LUXURY STYLES ---
-st.set_page_config(page_title="Pepper Hunter PRO", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -56,7 +56,6 @@ current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
 
-# ตั้งค่าเป้าหมาย (เจ้านายปรับแก้ตรงนี้ได้)
 TP_PCT = 5.0
 SL_PCT = -3.0
 
@@ -68,49 +67,32 @@ if sheet:
             df_perf.columns = df_perf.columns.str.strip()
             last_row = df_perf.iloc[-1]
             
-            # ดึงค่าพื้นฐาน
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
             hunting_symbol = last_row.get('เหรียญ')
             entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
             
-            # ตรวจสอบการทบทุน
             last_pnl_str = str(last_row.get('กำไร%', '0'))
             if '-' not in last_pnl_str and last_pnl_str not in ['0', '0%', '']:
                 next_invest = 1200.0
 
-            # --- [ 핵심 ] AUTO-EXIT LOGIC ---
             if status == 'HUNTING' and hunting_symbol:
-                # ดึงราคาปัจจุบันมาเช็คด่วน
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
                 if not ticker.empty:
                     cur_p_thb = float(ticker['Close'].iloc[-1]) * live_rate
                     pnl_now = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
                     
-                    # ถ้าเข้าเงื่อนไข TP หรือ SL
                     if pnl_now >= TP_PCT or pnl_now <= SL_PCT:
-                        # คำนวณยอดเงินใหม่ (ปิดไม้)
                         new_bal = current_total_bal * (1 + (pnl_now / 100))
-                        
-                        # สร้าง Row ข้อมูลใหม่ (อ้างอิงตาม Column ที่เจ้านายให้มา)
-                        # วันที่ | เหรียญ | สถานะ | ราคาซื้อ(฿) | ราคาขาย(฿) | กำไร% | Score | Balance | จำนวน | Headline | Bot_Status | News_Sentiment | News_Headline
                         exit_row = [
                             now_th.strftime("%Y-%m-%d %H:%M"), 
-                            hunting_symbol, 
-                            "CLOSED", 
-                            entry_p_thb, 
-                            cur_p_thb, 
-                            f"{pnl_now:.2f}%", 
-                            0, 
-                            new_bal, 
-                            0, 
-                            "ALGO_AUTO_EXIT", 
-                            "DONE", 
-                            "N/A", 
+                            hunting_symbol, "CLOSED", entry_p_thb, 
+                            cur_p_thb, f"{pnl_now:.2f}%", 0, new_bal, 
+                            0, "ALGO_AUTO_EXIT", "DONE", "N/A", 
                             f"System Exit at {pnl_now:.2f}%"
                         ]
                         sheet.append_row(exit_row)
-                        st.balloons() # ฉลองปิดไม้!
+                        st.balloons()
                         st.success(f"🤖 AUTO-CLOSED: {hunting_symbol} at {pnl_now:.2f}%")
                         time.sleep(5)
                         st.rerun()
@@ -149,20 +131,39 @@ with m3:
         <b style="color:#e9eaeb; font-size:20px;">{update_time}</b>
     </div>''', unsafe_allow_html=True)
 
-# --- 6. ACTIVE TRADE DISPLAY ---
+# --- 6. ACTIVE TRADE DISPLAY (REVISED) ---
 if hunting_symbol:
     st.write(f"#### ⚡ Current Mission: {hunting_symbol}")
     hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
     hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
-    cur_p = float(hist['Close'].iloc[-1]) * live_rate
-    pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
     
+    # 1. ข้อมูลราคาตลาด
+    market_price_thb = float(hist['Close'].iloc[-1]) * live_rate
+    pnl_pct = ((market_price_thb - entry_p_thb) / entry_p_thb) * 100
+    
+    # 2. คำนวณมูลค่าในกระเป๋าจริง
+    # จำนวนเหรียญที่ถือ = เงินที่ลงทุนงวดที่แล้ว / ราคาที่ซื้อมา
+    units_held = next_invest / entry_p_thb
+    current_asset_value = units_held * market_price_thb
+    real_profit_baht = current_asset_value - next_invest
+
     col_chart, col_stat = st.columns([2, 1])
     with col_chart:
-        st.area_chart(hist['Close'] * live_rate, height=150, color="#00ff88" if pnl >=0 else "#ff4b4b")
+        st.area_chart(hist['Close'] * live_rate, height=180, color="#00ff88" if pnl_pct >=0 else "#ff4b4b")
+    
     with col_stat:
-        st.metric("PnL (Live)", f"{pnl:.2f}%", delta=f"{cur_p - entry_p_thb:,.2f} ฿")
-        st.caption(f"Target TP: +{TP_PCT}% | SL: {SL_PCT}%")
+        # แสดงมูลค่าเงิน 1,000 บาท ของเราว่าตอนนี้กลายเป็นกี่บาท
+        st.metric("My Asset Value", f"{current_asset_value:,.2f} ฿", f"{real_profit_baht:,.2f} ฿")
+        
+        # แสดงหน่วยที่ถืออยู่แบบชัดๆ
+        st.markdown(f"""
+        <div style="background: rgba(0,255,136,0.1); padding: 12px; border-radius: 10px; border: 1px solid rgba(0,255,136,0.3); text-align: center;">
+            <small style="color: #888;">UNITS HELD</small><br>
+            <b style="font-size: 20px; color: #00ff88;">{units_held:.6f}</b> <small>{hunting_symbol.split('-')[0]}</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.caption(f"Market Price: {market_price_thb:,.0f} ฿/Unit")
 
 # --- 7. MARKET RADAR (TABLE) ---
 st.write("#### 🔍 Intelligence Radar")
@@ -189,17 +190,12 @@ with st.spinner("🕵️ Scanning Markets..."):
         except: continue
 
 df_radar = pd.DataFrame(radar_list).sort_values("Confidence", ascending=False)
-
-st.dataframe(
-    df_radar,
-    width='stretch',
-    hide_index=True,
+st.dataframe(df_radar, width='stretch', hide_index=True,
     column_config={
         "Confidence": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100, format="%d%%"),
         "Price (฿)": st.column_config.NumberColumn("Price (฿)", format="%.0f"),
         "RSI": st.column_config.NumberColumn("RSI", format="%.1f")
-    }
-)
+    })
 
 # --- 8. SAFETY & CONTROL ---
 st.divider()
@@ -208,10 +204,9 @@ with c1:
     if st.button("🚨 EMERGENCY SELL", width='stretch', type="primary"):
         st.warning("Manual override sell triggered...")
 with c2:
-    st.info(f"Auto-Exit Monitoring: ON (TP {TP_PCT}% / SL {SL_PCT}%)")
+    st.info(f"Auto-Exit: ON (TP +{TP_PCT}% / SL {SL_PCT}%)")
 
-# Progress Bar
-st.progress(0, text=f"Auto-refreshing in 5m... Last scan: {update_time}")
+st.progress(0, text=f"Next update in 5m... Status: Monitoring {hunting_symbol if hunting_symbol else 'Market'}")
 
 time.sleep(300)
 st.rerun()
