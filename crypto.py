@@ -1,10 +1,9 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 import pandas_ta as ta
 import yfinance as yf
 import gspread
 import time
-import feedparser
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
@@ -47,7 +46,18 @@ def init_gsheet():
     except: return None
 
 # --- 3. DATA LOAD & AUTO-EXIT SYSTEM ---
-# --- แก้ไขส่วนที 3. DATA LOAD & AUTO-EXIT SYSTEM ---
+sheet = init_gsheet() # สร้างตัวแปร sheet ก่อนเรียกใช้
+live_rate = get_live_thb()
+now_th = datetime.now(timezone(timedelta(hours=7)))
+update_time = now_th.strftime("%H:%M:%S")
+
+# กำหนดค่าเริ่มต้นไว้กัน Error
+current_total_bal = 1000.0
+hunting_symbol, entry_p_thb = None, 0.0
+next_invest = 1000.0
+TP_PCT = 5.0
+SL_PCT = -3.0
+
 if sheet:
     try:
         recs = sheet.get_all_records()
@@ -56,17 +66,14 @@ if sheet:
             df_perf.columns = df_perf.columns.str.strip()
             last_row = df_perf.iloc[-1]
             
-            # --- ดึงข้อมูลจากคอลัมน์ใหม่ ---
+            # ดึงข้อมูลจากคอลัมน์ใหม่ที่เจ้านายจัดมา
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
             hunting_symbol = last_row.get('เหรียญ')
             entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-            
-            # ดึงเงินลงทุนจริงของไม้นี้จากคอลัมน์ "เงินลงทุน(฿)"
-            # ถ้าไม่มีข้อมูล ให้ใช้ค่าจาก Balance หรือ 1000 เป็นตัวสำรอง
             next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
             
-            # ตรวจสอบการทบทุน (ถ้าไม้ล่าสุดกำไร ไม้ถัดไปตั้งเป้า 1200)
+            # เช็คการทบทุน
             last_pnl_str = str(last_row.get('กำไร%', '0'))
             if status == 'CLOSED' and '-' not in last_pnl_str and last_pnl_str not in ['0', '0%', '']:
                 next_invest = 1200.0
@@ -78,33 +85,25 @@ if sheet:
                     pnl_now = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
                     
                     if pnl_now >= TP_PCT or pnl_now <= SL_PCT:
-                        # คำนวณยอดเงินใหม่
                         new_bal = current_total_bal * (1 + (pnl_now / 100))
                         
-                        # --- ปรับ exit_row ให้ตรงกับ 14 คอลัมน์ใหม่ของเจ้านาย ---
-                        # 1.วันที่ | 2.เหรียญ | 3.สถานะ | 4.ราคาซื้อ(฿) | 5.เงินลงทุน(฿) 
-                        # 6.ราคาขาย(฿) | 7.กำไร% | 8.Score | 9.Balance | 10.จำนวน 
-                        # 11.Headline | 12.Bot_Status | 13.News_Sentiment | 14.News_Headline
-                        
-                        units_held = next_invest / entry_p_thb
-                        
+                        # บันทึกลง 14 คอลัมน์ตามลำดับที่เจ้านายปรับใหม่
                         exit_row = [
-                            now_th.strftime("%Y-%m-%d %H:%M"), # 1. วันที่
-                            hunting_symbol,                    # 2. เหรียญ
-                            "CLOSED",                          # 3. สถานะ
-                            entry_p_thb,                       # 4. ราคาซื้อ(฿)
-                            next_invest,                       # 5. เงินลงทุน(฿)
-                            cur_p_thb,                         # 6. ราคาขาย(฿)
-                            f"{pnl_now:.2f}%",                 # 7. กำไร%
-                            0,                                 # 8. Score
-                            new_bal,                           # 9. Balance
-                            0,                                 # 10. จำนวน (ปิดไม้แล้วเหลือ 0)
-                            "ALGO_AUTO_EXIT",                  # 11. Headline
-                            "DONE",                            # 12. Bot_Status
-                            "N/A",                             # 13. News_Sentiment
-                            f"System Exit at {pnl_now:.2f}%"   # 14. News_Headline
+                            now_th.strftime("%Y-%m-%d %H:%M"), # วันที่
+                            hunting_symbol,                    # เหรียญ
+                            "CLOSED",                          # สถานะ
+                            entry_p_thb,                       # ราคาซื้อ(฿)
+                            next_invest,                       # เงินลงทุน(฿)
+                            cur_p_thb,                         # ราคาขาย(฿)
+                            f"{pnl_now:.2f}%",                 # กำไร%
+                            0,                                 # Score
+                            new_bal,                           # Balance
+                            0,                                 # จำนวน (ขายหมดแล้ว)
+                            "ALGO_AUTO_EXIT",                  # Headline
+                            "DONE",                            # Bot_Status
+                            "N/A",                             # News_Sentiment
+                            f"System Exit at {pnl_now:.2f}%"   # News_Headline
                         ]
-                        
                         sheet.append_row(exit_row)
                         st.balloons()
                         st.success(f"🤖 AUTO-CLOSED: {hunting_symbol} at {pnl_now:.2f}%")
@@ -145,47 +144,39 @@ with m3:
         <b style="color:#e9eaeb; font-size:20px;">{update_time}</b>
     </div>''', unsafe_allow_html=True)
 
-# --- 6. ACTIVE TRADE DISPLAY (GRAPH SYNCED WITH ASSET VALUE) ---
+# --- 6. ACTIVE TRADE DISPLAY (SYNCED GRAPH) ---
 if hunting_symbol:
     st.write(f"#### ⚡ Current Mission: {hunting_symbol}")
-    # ดึงข้อมูลย้อนหลังเพื่อทำกราฟ
     hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
     hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
     
-    # คำนวณค่าสำคัญ
     market_price_thb = float(hist['Close'].iloc[-1]) * live_rate
     pnl_pct = ((market_price_thb - entry_p_thb) / entry_p_thb) * 100
     units_held = next_invest / entry_p_thb
     current_asset_value = units_held * market_price_thb
     real_profit_baht = current_asset_value - next_invest
 
-    # --- หัวใจสำคัญ: ปรับเส้นกราฟให้เป็นมูลค่าเงินบาทในกระเป๋า ---
-    # เอาประวัติราคาปิด x อัตราแลกเปลี่ยน x จำนวนหน่วยที่ถือ
+    # กราฟแสดงมูลค่าเงินบาทในมือ (Asset Value)
     asset_value_graph = hist['Close'] * live_rate * units_held
 
     col_chart, col_stat = st.columns([2, 1])
     with col_chart:
-        # กราฟตอนนี้จะแสดงเลข 1,000 +/- แล้วครับ ไม่ใช่ 60,000
         st.area_chart(asset_value_graph, height=200, color="#00ff88" if pnl_pct >=0 else "#ff4b4b")
-        st.caption(f"📈 Portfolio Value Tracking (Baht) - Units: {units_held:.6f}")
+        st.caption(f"📈 Real-time Value (฿) | Units: {units_held:.6f}")
     
     with col_stat:
         st.metric("My Asset Value", f"{current_asset_value:,.2f} ฿", f"{real_profit_baht:,.2f} ฿")
-        
         st.markdown(f"""
         <div style="background: rgba(0,255,136,0.1); padding: 12px; border-radius: 10px; border: 1px solid rgba(0,255,136,0.3); text-align: center;">
             <small style="color: #888;">INVESTMENT</small><br>
             <b style="font-size: 20px; color: #e9eaeb;">{next_invest:,.0f} ฿</b>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.caption(f"Entry Price: {entry_p_thb:,.0f} ฿")
-        st.caption(f"Market Price: {market_price_thb:,.0f} ฿")
+        st.caption(f"Market: {market_price_thb:,.0f} ฿/Unit")
 
-# --- 7. MARKET RADAR (TABLE) ---
+# --- 7. MARKET RADAR ---
 st.write("#### 🔍 Intelligence Radar")
 tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "LINK-USD", "AKT-USD"]
-
 radar_list = []
 with st.spinner("🕵️ Scanning Markets..."):
     raw_data = yf.download(tickers, period="2d", interval="1h", group_by='ticker', progress=False)
@@ -223,8 +214,6 @@ with c1:
 with c2:
     st.info(f"Auto-Exit: ON (TP +{TP_PCT}% / SL {SL_PCT}%)")
 
-st.progress(0, text=f"Auto-refreshing in 5m... Status: Monitoring {hunting_symbol if hunting_symbol else 'Market'}")
-
+st.progress(0, text=f"Auto-refreshing in 5m... Last scan: {update_time}")
 time.sleep(300)
 st.rerun()
-
