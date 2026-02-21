@@ -36,7 +36,7 @@ def get_live_thb():
         # ปรับวิธีดึงให้รองรับ pandas version ใหม่
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
         rate = data['Close'].iloc[-1]
-        return float(rate)
+        return float(rate.iloc[0]) if isinstance(rate, pd.Series) else float(rate)
     except:
         return 35.5 
 
@@ -126,7 +126,9 @@ st.title("🦔 Pepper Hunter")
 if hunting_symbol:
     # แก้ไขจุดที่แจ้งเตือน FutureWarning ในการดึงราคา
     curr_data_raw = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
-    cur_p_thb = float(curr_data_raw['Close'].iloc[-1]) * live_rate
+    last_close = curr_data_raw['Close'].iloc[-1]
+    cur_p_thb = float(last_close.iloc[0]) if isinstance(last_close, pd.Series) else float(last_close)
+    cur_p_thb = cur_p_thb * live_rate
     profit_pct = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
     
     st.subheader(f"📍 ถืออยู่: {hunting_symbol}")
@@ -193,3 +195,4 @@ if hunting_symbol:
 
 time.sleep(300)
 st.rerun()
+
