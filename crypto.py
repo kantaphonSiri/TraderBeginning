@@ -7,55 +7,24 @@ import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS & DYNAMIC THEMES ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="expanded")
+# --- 1. SETTINGS & PROFESSIONAL DARK UI ---
+st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
-if 'pepper_theme' not in st.session_state:
-    st.session_state.pepper_theme = 'Cyber Neon'
-
-def apply_theme(theme_name):
-    if theme_name == 'Cyber Neon':
-        bg = "linear-gradient(135deg, #0b0e11 0%, #1c2128 100%)"
-        card_bg = "rgba(255, 255, 255, 0.05)"
-        accent = "#00ff88"
-        text_color = "#e9eaeb"
-        grid_color = "rgba(255,255,255,0.1)"
-    elif theme_name == 'Bloomberg Pro':
-        bg = "#001d3d"
-        card_bg = "#003566"
-        accent = "#ffc300"
-        text_color = "#ffffff"
-        grid_color = "#001d3d"
-    else:  # Zen Minimal
-        bg = "#f8f9fa"
-        card_bg = "#ffffff"
-        accent = "#212529"
-        text_color = "#212529"
-        grid_color = "#e9ecef"
-        
-    st.markdown(f"""
-        <style>
-        .stApp {{ background: {bg}; color: {text_color}; }}
-        .trade-card {{
-            background: {card_bg};
-            border: 1px solid {grid_color};
-            border-radius: 12px;
-            padding: 18px;
-            margin-bottom: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }}
-        [data-testid="stMetricValue"] {{ 
-            color: {accent} !important; 
-            font-size: 26px !important;
-            font-weight: 700;
-            text-shadow: 0 0 10px {accent if theme_name == 'Cyber Neon' else 'transparent'};
-        }}
-        h1, h2, h3, h4, p, small, span {{ color: {text_color} !important; }}
-        .stButton>button {{ width: 100%; border-radius: 8px; }}
-        </style>
-        """, unsafe_allow_html=True)
-
-apply_theme(st.session_state.pepper_theme)
+st.markdown("""
+    <style>
+    .stApp { background: #0e1117; color: #e9eaeb; }
+    .trade-card {
+        background: #1c2128;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+    }
+    .status-hunting { color: #ff4b4b; font-weight: bold; }
+    .status-scanning { color: #00ff88; font-weight: bold; }
+    [data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- 2. CORE FUNCTIONS ---
 @st.cache_data(ttl=60)
@@ -74,122 +43,104 @@ def init_gsheet():
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
     except: return None
 
-# --- 3. DATA LOAD & AUTO-EXIT SYSTEM ---
+# --- 3. DATA PROCESSING ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
-update_time = now_th.strftime("%H:%M:%S")
 
-# Default Values
+# Init variables
 current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
-TP_PCT, SL_PCT = 5.0, -3.0
+recent_trades = pd.DataFrame()
+win_rate = 0.0
 
 if sheet:
     try:
         recs = sheet.get_all_records()
         if recs:
-            df_perf = pd.DataFrame(recs)
-            df_perf.columns = df_perf.columns.str.strip()
-            last_row = df_perf.iloc[-1]
+            df_all = pd.DataFrame(recs)
+            df_all.columns = df_all.columns.str.strip()
             
+            # ดึงไม้ปัจจุบัน
+            last_row = df_all.iloc[-1]
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
             hunting_symbol = last_row.get('เหรียญ')
             entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
             next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
-            
-            last_pnl_str = str(last_row.get('กำไร%', '0'))
-            if status == 'CLOSED' and '-' not in last_pnl_str and last_pnl_str not in ['0', '0%', '']:
-                next_invest = 1200.0
 
+            # คำนวณ Win Rate จากประวัติทั้งหมด
+            closed_trades = df_all[df_all['สถานะ'] == 'CLOSED']
+            if not closed_trades.empty:
+                wins = closed_trades['กำไร%'].apply(lambda x: 1 if '-' not in str(x) and str(x) != '0%' else 0).sum()
+                win_rate = (wins / len(closed_trades)) * 100
+                recent_trades = closed_trades.tail(5)[['วันที่', 'เหรียญ', 'กำไร%', 'Balance']]
+
+            # Auto-Exit Logic
             if status == 'HUNTING' and hunting_symbol:
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
                 if not ticker.empty:
-                    cur_p_thb = float(ticker['Close'].iloc[-1]) * live_rate
-                    pnl_now = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
-                    
-                    if pnl_now >= TP_PCT or pnl_now <= SL_PCT:
-                        new_bal = current_total_bal * (1 + (pnl_now / 100))
-                        exit_row = [
-                            now_th.strftime("%Y-%m-%d %H:%M"), hunting_symbol, "CLOSED",
-                            entry_p_thb, next_invest, cur_p_thb, f"{pnl_now:.2f}%",
-                            0, new_bal, 0, "ALGO_AUTO_EXIT", "DONE", "N/A", f"System Exit at {pnl_now:.2f}%"
-                        ]
-                        sheet.append_row(exit_row)
-                        st.balloons()
+                    cur_p = float(ticker['Close'].iloc[-1]) * live_rate
+                    pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
+                    if pnl >= 5.0 or pnl <= -3.0:
+                        new_bal = current_total_bal * (1 + (pnl / 100))
+                        sheet.append_row([now_th.strftime("%Y-%m-%d %H:%M"), hunting_symbol, "CLOSED", entry_p_thb, next_invest, cur_p, f"{pnl:.2f}%", 0, new_bal, 0, "AUTO_EXIT", "DONE", "N/A", "System Close"])
                         st.rerun()
     except Exception as e:
-        st.error(f"Sync Error: {e}")
+        st.error(f"Data Error: {e}")
 
-# --- 4. SIDEBAR CONTROL ---
-with st.sidebar:
-    st.markdown(f"### 🎨 Pepper Hunter UI")
-    selected_theme = st.selectbox("Switch Theme", ['Cyber Neon', 'Bloomberg Pro', 'Zen Minimal'], 
-                                 index=['Cyber Neon', 'Bloomberg Pro', 'Zen Minimal'].index(st.session_state.pepper_theme))
-    if selected_theme != st.session_state.pepper_theme:
-        st.session_state.pepper_theme = selected_theme
-        st.rerun()
+# --- 4. DASHBOARD UI ---
+st.title("🦔 Pepper Hunter PRO")
 
-    st.divider()
+# Top Metrics
+c1, c2, c3, c4 = st.columns(4)
+with c1:
     st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
-    st.info(f"💰 Next Invest: {next_invest:,.0f} ฿")
-    if st.button("🔄 Manual Sync"):
-        st.rerun()
+with c2:
+    st.metric("Win Rate", f"{win_rate:.1f}%")
+with c3:
+    st.metric("Live USD/THB", f"฿{live_rate:.2f}")
+with c4:
+    status_html = f'<span class="status-hunting">HUNTING {hunting_symbol}</span>' if hunting_symbol else '<span class="status-scanning">SCANNING</span>'
+    st.markdown(f'<div class="trade-card"><small>SYSTEM STATUS</small><br>{status_html}</div>', unsafe_allow_html=True)
 
-# --- 5. DASHBOARD HEADER ---
-st.markdown(f"## 🦔 Pepper Hunter <small style='font-size:14px; opacity:0.6;'>PRO v2026</small>", unsafe_allow_html=True)
+# Main Section
+col_left, col_right = st.columns([2, 1])
 
-m1, m2, m3 = st.columns(3)
-with m1:
-    status_color = "#ff4b4b" if hunting_symbol else "#00ff88"
-    st.markdown(f'<div class="trade-card"><small>STATUS</small><br><b style="color:{status_color}; font-size:20px;">{"🔴 HUNTING" if hunting_symbol else "🟢 SCANNING"}</b></div>', unsafe_allow_html=True)
-with m2:
-    st.markdown(f'<div class="trade-card"><small>USD/THB</small><br><b style="font-size:20px;">฿ {live_rate:.2f}</b></div>', unsafe_allow_html=True)
-with m3:
-    st.markdown(f'<div class="trade-card"><small>LAST SYNC</small><br><b style="font-size:20px;">{update_time}</b></div>', unsafe_allow_html=True)
+with col_left:
+    if hunting_symbol:
+        st.subheader(f"🚀 Active Trade: {hunting_symbol}")
+        hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
+        hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
+        units = next_invest / entry_p_thb
+        st.area_chart(hist['Close'] * live_rate * units, height=250)
+    else:
+        st.info("🔎 Bot is scanning for RSI opportunities... No active trade.")
+        st.write("#### Market Intelligence Radar")
+        # ใส่ตารางย่อของ Radar
+        st.caption("Scanning BTC, ETH, SOL, NEAR, LINK...")
 
-# --- 6. ACTIVE TRADE DISPLAY ---
-if hunting_symbol:
-    st.write(f"#### ⚡ Active Mission: {hunting_symbol}")
-    hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
-    hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
-    
-    market_p = float(hist['Close'].iloc[-1]) * live_rate
-    pnl_pct = ((market_p - entry_p_thb) / entry_p_thb) * 100
-    units = next_invest / entry_p_thb
-    asset_val = units * market_p
-    
-    col_chart, col_stat = st.columns([2, 1])
-    with col_chart:
-        chart_color = "#00ff88" if pnl_pct >= 0 else "#ff4b4b"
-        st.area_chart(hist['Close'] * live_rate * units, height=200, color=chart_color)
-    
-    with col_stat:
-        st.metric("My Asset Value", f"{asset_val:,.2f} ฿", f"{(asset_val-next_invest):,.2f} ฿")
-        st.caption(f"Entry: {entry_p_thb:,.0f} | Market: {market_p:,.0f}")
+with col_right:
+    st.subheader("📜 Recent History")
+    if not recent_trades.empty:
+        for _, row in recent_trades.iloc[::-1].iterrows():
+            color = "#00ff88" if '-' not in str(row['กำไร%']) else "#ff4b4b"
+            st.markdown(f"""
+                <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px; background: #1c2128;">
+                    <small>{row['วันที่']}</small><br>
+                    <b>{row['เหรียญ']}</b>: <span style="color:{color}">{row['กำไร%']}</span><br>
+                    <small>Bal: {row['Balance']:,.0f} ฿</small>
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.write("No closed trades yet.")
 
-# --- 7. MARKET RADAR ---
-st.write("#### 🔍 Intelligence Radar")
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "NEAR-USD", "LINK-USD"]
-radar_list = []
-with st.spinner("🕵️ Scanning..."):
-    raw_data = yf.download(tickers, period="2d", interval="1h", group_by='ticker', progress=False)
-    for t in tickers:
-        try:
-            df = raw_data[t].dropna()
-            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-            df.ta.rsi(length=14, append=True)
-            p_thb = float(df['Close'].iloc[-1]) * live_rate
-            rsi = float(df['RSI_14'].iloc[-1])
-            radar_list.append({"Asset": t.split("-")[0], "Price (฿)": p_thb, "RSI": rsi, "Confidence": int(80 if rsi < 35 else 40)})
-        except: continue
-
-st.dataframe(pd.DataFrame(radar_list), use_container_width=True, hide_index=True)
-
-# --- 8. FOOTER ---
+# Control & Footer
 st.divider()
-st.progress(0, text=f"Monitoring {hunting_symbol if hunting_symbol else 'Markets'}...")
+if st.button("🔄 Force Manual Sync"):
+    st.rerun()
+
+st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
