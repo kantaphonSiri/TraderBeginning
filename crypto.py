@@ -131,39 +131,42 @@ with m3:
         <b style="color:#e9eaeb; font-size:20px;">{update_time}</b>
     </div>''', unsafe_allow_html=True)
 
-# --- 6. ACTIVE TRADE DISPLAY (REVISED) ---
+# --- 6. ACTIVE TRADE DISPLAY (GRAPH SYNCED WITH ASSET VALUE) ---
 if hunting_symbol:
     st.write(f"#### ⚡ Current Mission: {hunting_symbol}")
+    # ดึงข้อมูลย้อนหลังเพื่อทำกราฟ
     hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
     hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
     
-    # 1. ข้อมูลราคาตลาด
+    # คำนวณค่าสำคัญ
     market_price_thb = float(hist['Close'].iloc[-1]) * live_rate
     pnl_pct = ((market_price_thb - entry_p_thb) / entry_p_thb) * 100
-    
-    # 2. คำนวณมูลค่าในกระเป๋าจริง
-    # จำนวนเหรียญที่ถือ = เงินที่ลงทุนงวดที่แล้ว / ราคาที่ซื้อมา
     units_held = next_invest / entry_p_thb
     current_asset_value = units_held * market_price_thb
     real_profit_baht = current_asset_value - next_invest
 
+    # --- หัวใจสำคัญ: ปรับเส้นกราฟให้เป็นมูลค่าเงินบาทในกระเป๋า ---
+    # เอาประวัติราคาปิด x อัตราแลกเปลี่ยน x จำนวนหน่วยที่ถือ
+    asset_value_graph = hist['Close'] * live_rate * units_held
+
     col_chart, col_stat = st.columns([2, 1])
     with col_chart:
-        st.area_chart(hist['Close'] * live_rate, height=180, color="#00ff88" if pnl_pct >=0 else "#ff4b4b")
+        # กราฟตอนนี้จะแสดงเลข 1,000 +/- แล้วครับ ไม่ใช่ 60,000
+        st.area_chart(asset_value_graph, height=200, color="#00ff88" if pnl_pct >=0 else "#ff4b4b")
+        st.caption(f"📈 Portfolio Value Tracking (Baht) - Units: {units_held:.6f}")
     
     with col_stat:
-        # แสดงมูลค่าเงิน 1,000 บาท ของเราว่าตอนนี้กลายเป็นกี่บาท
         st.metric("My Asset Value", f"{current_asset_value:,.2f} ฿", f"{real_profit_baht:,.2f} ฿")
         
-        # แสดงหน่วยที่ถืออยู่แบบชัดๆ
         st.markdown(f"""
         <div style="background: rgba(0,255,136,0.1); padding: 12px; border-radius: 10px; border: 1px solid rgba(0,255,136,0.3); text-align: center;">
-            <small style="color: #888;">UNITS HELD</small><br>
-            <b style="font-size: 20px; color: #00ff88;">{units_held:.6f}</b> <small>{hunting_symbol.split('-')[0]}</small>
+            <small style="color: #888;">INVESTMENT</small><br>
+            <b style="font-size: 20px; color: #e9eaeb;">{next_invest:,.0f} ฿</b>
         </div>
         """, unsafe_allow_html=True)
         
-        st.caption(f"Market Price: {market_price_thb:,.0f} ฿/Unit")
+        st.caption(f"Entry Price: {entry_p_thb:,.0f} ฿")
+        st.caption(f"Market Price: {market_price_thb:,.0f} ฿")
 
 # --- 7. MARKET RADAR (TABLE) ---
 st.write("#### 🔍 Intelligence Radar")
@@ -206,7 +209,7 @@ with c1:
 with c2:
     st.info(f"Auto-Exit: ON (TP +{TP_PCT}% / SL {SL_PCT}%)")
 
-st.progress(0, text=f"Next update in 5m... Status: Monitoring {hunting_symbol if hunting_symbol else 'Market'}")
+st.progress(0, text=f"Auto-refreshing in 5m... Status: Monitoring {hunting_symbol if hunting_symbol else 'Market'}")
 
 time.sleep(300)
 st.rerun()
