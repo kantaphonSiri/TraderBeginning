@@ -1,5 +1,5 @@
 import streamlit as st
-import pd as pd
+import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
 import gspread
@@ -217,3 +217,4 @@ with c2:
 st.progress(0, text=f"Auto-refreshing in 5m... Last scan: {update_time}")
 time.sleep(300)
 st.rerun()
+
