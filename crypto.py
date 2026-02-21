@@ -52,21 +52,42 @@ live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
 update_time = now_th.strftime("%H:%M:%S")
 
-# ดึงข้อมูลจาก Google Sheets
+# ตั้งค่าตัวแปรพื้นฐาน
 current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 df_perf = pd.DataFrame()
+next_invest = 1000.0 
 
 if sheet:
-    recs = sheet.get_all_records()
-    if recs:
-        df_perf = pd.DataFrame(recs)
-        df_perf['Balance'] = pd.to_numeric(df_perf['Balance'], errors='coerce')
-        last_row = df_perf.iloc[-1]
-        current_total_bal = float(last_row['Balance'])
-        if last_row['สถานะ'] == 'HUNTING':
-            hunting_symbol = last_row['เหรียญ']
-            entry_p_thb = float(last_row['ราคาซื้อ(฿)'])
+    try:
+        recs = sheet.get_all_records()
+        if recs:
+            df_perf = pd.DataFrame(recs)
+            # ลบช่องว่างหัว-ท้ายคอลัมน์ป้องกัน Error
+            df_perf.columns = df_perf.columns.str.strip()
+            
+            if not df_perf.empty:
+                last_row = df_perf.iloc[-1]
+                
+                # 1. ดึงยอดคงเหลือ (Balance)
+                if 'Balance' in df_perf.columns:
+                    current_total_bal = float(last_row['Balance']) if last_row['Balance'] != "" else 1000.0
+                
+                # 2. เช็คสถานะการถือเหรียญ (สถานะ)
+                if 'สถานะ' in df_perf.columns and last_row['สถานะ'] == 'HUNTING':
+                    hunting_symbol = last_row.get('เหรียญ', None)
+                    entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
+
+                # 3. คำนวณเงินลงทุนไม้ถัดไป (ดูจากคอลัมน์ 'กำไร%')
+                # ถ้าไม้ล่าสุดกำไรเป็นบวก (ไม่มีเครื่องหมายลบ) ให้เพิ่มงบ
+                if 'กำไร%' in df_perf.columns:
+                    last_pnl = str(last_row['กำไร%'])
+                    if '-' not in last_pnl and last_pnl not in ['0', '0%', '']:
+                        next_invest = 1200.0 # ชนะทบ
+                    else:
+                        next_invest = 1000.0 # แพ้ถอยมาตั้งหลัก
+    except Exception as e:
+        st.error(f"❌ ระบบอ่านคอลัมน์ผิดพลาด: {e}")
 
 # --- 4. SIDEBAR (CONTROL CENTER) ---
 with st.sidebar:
@@ -76,22 +97,16 @@ with st.sidebar:
     
     st.metric("PORTFOLIO", f"{current_total_bal:,.2f} ฿")
     
-    # คำนวณเงินลงทุนไม้ถัดไป (ชนะทบ/แพ้ถอย)
-    # สมมติ Logic: ถ้าไม้ล่าสุดชนะ ลง 1200 ถ้าแพ้ลง 1000
-    next_invest = 1000.0
-    if not df_perf.empty and '-' not in str(df_perf.iloc[-1]['กำไร/ขาดทุน']):
-        next_invest = 1200.0
-    
     st.subheader("🔥 Strategy: Dynamic")
     st.info(f"Next Investment: {next_invest:,.2f} ฿")
     
     st.divider()
     st.write(f"💹 USD/THB: **{live_rate:.2f}**")
-    st.write(f"⏰ Last Sync: {update_time}")
+    st.write(f"⏰ Last Update: {update_time}")
     
     if st.button("🚀 FORCE SYNC", use_container_width=True):
         st.rerun()
-
+        
 # --- 5. TOP KPI BAR ---
 st.write(f"## 🦔 Pepper Hunter")
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -172,3 +187,4 @@ st.progress(0, text=progress_text)
 
 time.sleep(300)
 st.rerun()
+
