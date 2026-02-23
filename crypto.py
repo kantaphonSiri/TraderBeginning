@@ -66,7 +66,11 @@ if sheet:
             last_row = df_all.iloc[-1]
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
-            hunting_symbol = last_row.get('เหรียญ')
+            # ถ้าสถานะเป็น HUNTING จริงๆ ถึงจะเก็บชื่อเหรียญมาใช้
+            if status == 'HUNTING':
+                hunting_symbol = last_row.get('เหรียญ')
+            else:
+                hunting_symbol = None  # ล้างค่าทิ้งเพื่อให้หน้าเว็บกลับไปโหมด SCANNING
             entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
             next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
 
@@ -144,4 +148,5 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
 
