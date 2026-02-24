@@ -109,36 +109,40 @@ with c4:
     status_html = f'<span class="status-hunting">HUNTING {hunting_symbol}</span>' if hunting_symbol else '<span class="status-scanning">SCANNING</span>'
     st.markdown(f'<div class="trade-card"><small>SYSTEM STATUS</small><br>{status_html}</div>', unsafe_allow_html=True)
 
-# Main Section
+# --- Main Section ---
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
     if hunting_symbol:
-        st.subheader(f"🚀 Active Trade: {hunting_symbol}")
+        st.subheader(f"🚀 Active Mission: {hunting_symbol}")
+        # ดึงข้อมูลกราฟเหรียญปัจจุบัน
         hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
         hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
+        
+        # คำนวณมูลค่าปัจจุบันเทียบกับเงินบาท
+        cur_p_thb = float(hist['Close'].values[-1]) * live_rate
         units = next_invest / entry_p_thb
-        st.area_chart(hist['Close'] * live_rate * units, height=250)
+        asset_value_series = hist['Close'] * live_rate * units
+        
+        st.area_chart(asset_value_series, height=250, color="#00ff88" if cur_p_thb >= entry_p_thb else "#ff4b4b")
+        st.caption(f"📈 Real-time Value (฿) | Units: {units:.6f}")
     else:
-        st.info("🔎 Bot is scanning for RSI opportunities... No active trade.")
-        st.write("#### Market Intelligence Radar")
-        # ใส่ตารางย่อของ Radar
-        st.caption("Scanning BTC, ETH, SOL, NEAR, LINK...")
+        st.subheader("📈 Portfolio Performance (Equity Curve)")
+        if sheet:
+            try:
+                # สร้างกราฟจากคอลัมน์ Balance ใน Google Sheet
+                df_balance = df_all[['วันที่', 'Balance']].copy()
+                df_balance['วันที่'] = pd.to_datetime(df_balance['วันที่'])
+                df_balance = df_balance.set_index('วันที่')
+                
+                # แสดงกราฟเส้นความมั่งคั่ง
+                st.line_chart(df_balance['Balance'], height=250, color="#00ff88")
+                st.info("🔎 Bot is scanning for RSI opportunities... Showing overall portfolio growth.")
+            except:
+                st.warning("Could not generate Equity Curve. Need more data in Sheet.")
 
-with col_right:
-    st.subheader("📜 Recent History")
-    if not recent_trades.empty:
-        for _, row in recent_trades.iloc[::-1].iterrows():
-            color = "#00ff88" if '-' not in str(row['กำไร%']) else "#ff4b4b"
-            st.markdown(f"""
-                <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px; background: #1c2128;">
-                    <small>{row['วันที่']}</small><br>
-                    <b>{row['เหรียญ']}</b>: <span style="color:{color}">{row['กำไร%']}</span><br>
-                    <small>Bal: {row['Balance']:,.0f} ฿</small>
-                </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.write("No closed trades yet.")
+        st.write("#### 🔍 Market Intelligence Radar")
+        st.caption("Scanning BTC, ETH, SOL, NEAR, LINK for Entry Signals...")
 
 # Control & Footer
 st.divider()
@@ -148,5 +152,6 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
 
 
