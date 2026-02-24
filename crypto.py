@@ -128,21 +128,37 @@ with col_left:
         st.caption(f"📈 Real-time Value (฿) | Units: {units:.6f}")
     else:
         st.subheader("📈 Portfolio Performance (Equity Curve)")
-        if sheet:
+        if not df_all.empty:
             try:
-                # สร้างกราฟจากคอลัมน์ Balance ใน Google Sheet
-                df_balance = df_all[['วันที่', 'Balance']].copy()
-                df_balance['วันที่'] = pd.to_datetime(df_balance['วันที่'])
-                df_balance = df_balance.set_index('วันที่')
+                # 1. คลีนข้อมูล: สร้าง DataFrame ใหม่สำหรับการวาดกราฟ
+                # ใช้ .copy() เพื่อไม่ให้กระทบกับตารางหลัก
+                df_chart = df_all[['วันที่', 'Balance']].copy()
                 
-                # แสดงกราฟเส้นความมั่งคั่ง
-                st.line_chart(df_balance['Balance'], height=250, color="#00ff88")
-                st.info("🔎 Bot is scanning for RSI opportunities... Showing overall portfolio growth.")
-            except:
-                st.warning("Could not generate Equity Curve. Need more data in Sheet.")
-
+                # 2. แปลง Balance ให้เป็นตัวเลข (ลบช่องว่าง หรือค่าที่แปลงไม่ได้ให้เป็น NaN)
+                df_chart['Balance'] = pd.to_numeric(df_chart['Balance'], errors='coerce')
+                
+                # 3. แปลงวันที่ (ใช้ dayfirst=True เพราะเจ้านายมีรูปแบบ 20/02/2026)
+                df_chart['วันที่'] = pd.to_datetime(df_chart['วันที่'], errors='coerce', dayfirst=True)
+                
+                # 4. ลบแถวที่ข้อมูลไม่สมบูรณ์ออก
+                df_chart = df_chart.dropna(subset=['วันที่', 'Balance'])
+                
+                # 5. เรียงลำดับวันที่ (จากเก่าไปใหม่)
+                df_chart = df_chart.sort_values('วันที่')
+                
+                if len(df_chart) >= 2:
+                    # ตั้งค่า Index เป็นวันที่เพื่อให้กราฟแสดงแกน X เป็นเวลา
+                    df_chart = df_chart.set_index('วันที่')
+                    st.line_chart(df_chart['Balance'], height=250, color="#00ff88")
+                    st.caption(f"💰 พอร์ตปัจจุบัน: {current_total_bal:,.2f} ฿ (อัปเดตล่าสุด: {now_th.strftime('%H:%M')})")
+                else:
+                    st.info("📉 ระบบต้องการข้อมูลอย่างน้อย 2 แถวที่มี Balance เพื่อลากเส้นกราฟครับ (ตอนนี้ข้อมูลยังไม่พร้อม)")
+            
+            except Exception as e:
+                st.error(f"⚠️ ไม่สามารถสร้างกราฟได้: {e}")
+        
         st.write("#### 🔍 Market Intelligence Radar")
-        st.caption("Scanning BTC, ETH, SOL, NEAR, LINK for Entry Signals...")
+        st.caption("Scanning for next opportunity...")
 
 # Control & Footer
 st.divider()
@@ -152,6 +168,7 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
 
 
 
