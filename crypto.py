@@ -8,16 +8,17 @@ import requests
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS & INITIALIZATION ---
-st.set_page_config(page_title="Pepper Hunter AI", layout="wide")
+# --- 1. SETTINGS ---
+st.set_page_config(page_title="Pepper Hunter", layout="wide")
+exchange = ccxt.kucoin({'enableRateLimit': True})
 
-# เปลี่ยนจาก binance เป็น kucoin (เสถียรกว่าบน Cloud Server และดึงข้อมูลสาธารณะได้เหมือนกัน)
-exchange = ccxt.kucoin({
-    'enableRateLimit': True,
-    'options': {'defaultType': 'spot'}
-})
+# เป้าหมายกำไร
+TARGET_PROFIT = 10000.0
+# ตั้งค่า Take Profit 3% และ Stop Loss 1.5% ต่อรอบเพื่อรักษาพอร์ต
+TP_PCT = 3.0
+SL_PCT = 1.5
 
-# --- 2. CORE FUNCTIONS ---
+# (ฟังก์ชัน init_gsheet และ get_live_thb ใช้ตัวเดิม)
 def init_gsheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -25,126 +26,98 @@ def init_gsheet():
         creds = Credentials.from_service_account_info(creds_dict, 
                 scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
-    except Exception as e:
-        st.sidebar.error(f"❌ Sheet Connection Error: {e}")
-        return None
+    except: return None
 
 @st.cache_data(ttl=1800)
 def get_live_thb():
     try:
         url = "https://open.er-api.com/v6/latest/USD"
         res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            return float(res.json()['rates']['THB'])
-    except:
-        return 35.00
-    return 35.00
+        return float(res.json()['rates']['THB']) if res.status_code == 200 else 35.0
+    except: return 35.0
 
-# ฟังก์ชันเดิมไม่ต้องแก้ แต่ KuCoin ใช้ชื่อเหรียญแบบเดิมได้เลย (BTC/USDT)
-def simulate_trade_potential(symbol, current_bal):
+def simulate_trade_potential(symbol):
     try:
-        # แปลงชื่อ Symbol ให้เข้ากับ Format ของ KuCoin (BTC-USD -> BTC/USDT)
         ccxt_symbol = symbol.replace("-USD", "/USDT")
-        
-        # ดึง OHLCV (KuCoin รองรับ fetch_ohlcv เหมือนกัน)
         ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        
-        if df.empty: return None
-
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
-        last_price = float(df['Close'].iloc[-1])
+        last_p = float(df['Close'].iloc[-1])
         last_rsi = float(df['RSI'].iloc[-1])
         last_ema = float(df['EMA_20'].iloc[-1])
         
-        trend = "UP" if last_price > last_ema else "DOWN"
-        score = 95 if (30 <= last_rsi <= 45 and trend == "UP") else (85 if last_rsi < 30 else 50)
-        
-        return {"Symbol": symbol, "Price": last_price, "Score": score, "Trend": trend}
-    except Exception as e:
-        # ถ้า KuCoin ตัวนี้ไม่มีเหรียญนี้ ให้ลองเปลี่ยน /USDT เป็น -USDT หรือชื่ออื่น
-        st.sidebar.warning(f"Scan error {symbol}: {e}")
-        return None
+        # AI Scoring: เน้นเข้าซื้อตอน RSI ต่ำและเริ่มกลับตัวเหนือ EMA
+        trend = "UP" if last_p > last_ema else "DOWN"
+        score = 95 if (last_rsi < 40 and trend == "UP") else (85 if last_rsi < 30 else 50)
+        return {"Symbol": symbol, "Price": last_p, "Score": score, "Trend": trend}
+    except: return None
 
-# --- 3. DATA PROCESSING (Fixed NameError) ---
-# --- ประกาศค่าเริ่มต้นไว้ก่อนเลย เพื่อกัน NameError ---
-current_bal = 1000.0 
+# --- 2. EXECUTION LOGIC ---
+current_bal = 1000.0
 bot_status = "OFF"
 hunting_symbol = None
+entry_price_thb = 0
+
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
 
-# ถ้าเชื่อมต่อ Sheet ได้ ค่อยไปดึงค่าจริงมาทับ
 if sheet:
-    try:
-        recs = sheet.get_all_records()
-        if recs:
-            df_all = pd.DataFrame(recs)
-            df_all.columns = [c.strip() for c in df_all.columns]
-            
-            last_row = df_all.iloc[-1]
-            # ใช้ .get เพื่อป้องกันกรณีไม่มี column นั้นๆ ใน sheet
-            current_bal = float(last_row.get('Balance', 1000.0))
-            bot_status = last_row.get('Bot_Status', 'OFF')
-            
-            if str(last_row.get('สถานะ')).upper() == 'HUNTING':
-                hunting_symbol = last_row.get('เหรียญ')
-    except Exception as e:
-        st.sidebar.info(f"Sheet is empty or structure mismatch: {e}")
+    recs = sheet.get_all_records()
+    if recs:
+        df_all = pd.DataFrame(recs)
+        df_all.columns = [c.strip() for c in df_all.columns]
+        last_row = df_all.iloc[-1]
+        current_bal = float(last_row.get('Balance', 1000))
+        bot_status = last_row.get('Bot_Status', 'OFF')
+        if str(last_row.get('สถานะ')).upper() == 'HUNTING':
+            hunting_symbol = last_row.get('เหรียญ')
+            entry_price_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
 
-# --- 4. DASHBOARD UI ---
 st.title("🦔 Pepper Hunter")
-st.write(f"💵 **Balance:** {current_bal:,.2f} ฿ | 🤖 **Status:** {bot_status}")
+progress = min(current_bal / TARGET_PROFIT, 1.0)
+st.progress(progress, text=f"Progress to 10,000 ฿: {progress*100:.2f}%")
 
-# รายชื่อเหรียญที่แนะนำ (ดึงผ่าน Binance ชัวร์กว่า Yahoo)
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD", "RENDER-USD", "FET-USD", "SUI-USD", "LINK-USD"]
-
-sim_df = pd.DataFrame()
-
-with st.spinner('🤖 AI Brain is scanning market...'):
-    results = []
-    for t in tickers:
-        # ตอนนี้ current_bal จะไม่มีวัน NameError แล้ว เพราะเราประกาศไว้ด้านบน
-        res = simulate_trade_potential(t, current_bal)
+# --- 3. AUTO TRADE ACTION ---
+if bot_status == "ON":
+    if hunting_symbol:
+        # CHECK TO SELL (ปิดงาน)
+        res = simulate_trade_potential(hunting_symbol)
         if res:
-            results.append(res)
-        time.sleep(0.1) # CCXT เร็วกว่า ไม่ต้องรอนาน
-    
-    if results:
-        sim_df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-
-if not sim_df.empty:
-    st.subheader("🎯 Pepper Trading Signals")
-    display_df = sim_df.copy()
-    display_df['Price (฿)'] = display_df.apply(lambda x: f"{x['Price'] * live_rate:,.2f}", axis=1)
-    st.dataframe(display_df[["Symbol", "Price (฿)", "Score", "Trend"]], use_container_width=True)
-
-    if not hunting_symbol and bot_status == "ON":
-        best = sim_df.iloc[0]
-        if st.button(f"🚀 Confirm Trade: {best['Symbol']}"):
-            price_thb = float(best['Price']) * live_rate
-            new_data = [
-                now_th.strftime("%d/%m/%Y %H:%M:%S"), 
-                best['Symbol'], "HUNTING", price_thb, current_bal, 
-                0, "0%", best['Score'], current_bal, 0, 
-                "AI Scanner", "ON", "Neutral", "Binance Data"
-            ]
-            sheet.append_row(new_data)
-            st.success(f"Started hunting {best['Symbol']}!")
-            time.sleep(2)
+            curr_p_thb = res['Price'] * live_rate
+            pnl = ((curr_p_thb - entry_price_thb) / entry_price_thb) * 100
+            
+            if pnl >= TP_PCT or pnl <= -SL_PCT:
+                new_bal = current_bal * (1 + (pnl/100))
+                sheet.append_row([
+                    now_th.strftime("%d/%m/%Y %H:%M:%S"), hunting_symbol, "CLOSED", 
+                    entry_price_thb, current_bal, curr_p_thb, f"{pnl:.2f}%", 0, 
+                    new_bal, 0, "AUTO EXIT", "ON", "Neutral", f"Exit at {pnl:.2f}%"
+                ])
+                st.success(f"💰 ปิดงาน {hunting_symbol}! PNL: {pnl:.2f}% | New Bal: {new_bal:.2f}")
+                time.sleep(5)
+                st.rerun()
+    else:
+        # CHECK TO BUY (เข้าซื้อ)
+        tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD"]
+        results = [simulate_trade_potential(t) for t in tickers]
+        valid_res = [r for r in results if r and r['Score'] >= 90]
+        
+        if valid_res:
+            best = sorted(valid_res, key=lambda x: x['Score'], reverse=True)[0]
+            price_thb = best['Price'] * live_rate
+            sheet.append_row([
+                now_th.strftime("%d/%m/%Y %H:%M:%S"), best['Symbol'], "HUNTING", 
+                price_thb, current_bal, 0, "0%", best['Score'], 
+                current_bal, 0, "AUTO ENTRY", "ON", "Neutral", "AI Signal Detected"
+            ])
+            st.info(f"🚀 AI สั่งลุย! ซื้อ {best['Symbol']} ที่ราคา {price_thb:,.2f} ฿")
+            time.sleep(5)
             st.rerun()
-    elif hunting_symbol:
-        st.warning(f"⚠️ กำลังถือเหรียญ **{hunting_symbol}** อยู่")
-else:
-    st.error("❌ ไม่สามารถดึงข้อมูล AI ได้ในขณะนี้ (Check Sidebar for errors)")
 
 st.divider()
-st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')}")
-
-# Auto Refresh 5 mins
-time.sleep(300)
+st.write(f"Last Scan: {now_th.strftime('%H:%M:%S')} | Bot is monitoring...")
+time.sleep(60) # Scan ทุก 1 นาทีเพื่อความไว
 st.rerun()
-
