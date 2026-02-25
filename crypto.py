@@ -1,43 +1,45 @@
 import streamlit as st
 import pandas as pd
-import pandas_ta as ta
 import yfinance as yf
 import gspread
 import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS & UI ---
+# --- 1. SETTINGS & PROFESSIONAL DARK UI ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
-<style>
-.stApp { background: #0e1117; color: #e9eaeb; }
-.trade-card {
-    background: #1c2128;
-    border: 1px solid #30363d;
-    border-radius: 10px;
-    padding: 15px;
-    margin-bottom: 10px;
-}
-.status-hunting { color: #ff4b4b; font-weight: bold; }
-.status-scanning { color: #00ff88; font-weight: bold; }
-.ai-box {
-    background: #1e293b;
-    padding: 15px;
-    border-radius: 10px;
-    border-left: 5px solid #38bdf8;
-}
-[data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    .stApp { background: #0e1117; color: #e9eaeb; }
+    .trade-card {
+        background: #1c2128;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+    }
+    .status-hunting { color: #ff4b4b; font-weight: bold; }
+    .status-scanning { color: #00ff88; font-weight: bold; }
+    .ai-box {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #38bdf8;
+    }
+    [data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- 2. CORE FUNCTIONS ---
 @st.cache_data(ttl=60)
 def get_live_thb():
     try:
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
-        return float(data['Close'].iloc[-1])
+        if not data.empty:
+            # ใช้ .item() เพื่อแก้ FutureWarning
+            return float(data['Close'].iloc[-1].item())
+        return 35.50
     except:
         return 35.50
 
@@ -80,6 +82,7 @@ if sheet:
             last_row = df_all.iloc[-1]
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
+            
             if status == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
                 entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
@@ -97,7 +100,7 @@ if sheet:
             if status == 'HUNTING' and hunting_symbol:
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
                 if not ticker.empty:
-                    cur_p = float(ticker['Close'].values[-1]) * live_rate
+                    cur_p = float(ticker['Close'].iloc[-1].item()) * live_rate
                     pnl = ((cur_p - entry_p_thb) / entry_p_thb) * 100
                     if pnl >= 5.0 or pnl <= -3.0:
                         new_bal = current_total_bal * (1 + (pnl / 100))
@@ -125,7 +128,7 @@ with col_left:
         hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
         if not hist.empty:
             hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
-            cur_p_thb = float(hist['Close'].values[-1]) * live_rate
+            cur_p_thb = float(hist['Close'].iloc[-1].item()) * live_rate
             units = next_invest / (entry_p_thb if entry_p_thb > 0 else 1)
             asset_value_series = hist['Close'] * live_rate * units
             st.area_chart(asset_value_series, height=250, color="#00ff88" if cur_p_thb >= entry_p_thb else "#ff4b4b")
@@ -141,10 +144,8 @@ with col_left:
                     st.line_chart(df_chart['Balance'], height=250, color="#38bdf8")
                 else:
                     st.info("Waiting for more trade history...")
-            except:
-                pass
+            except: pass
 
-    # บรรทัดที่ 150 ที่เคยมีปัญหา
     st.write("#### 🔍 Market Intelligence Radar")
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD"]
     radar_df = []
@@ -152,10 +153,9 @@ with col_left:
         try:
             px_data = yf.download(t, period="1d", interval="1m", progress=False)
             if not px_data.empty:
-                val = float(px_data['Close'].iloc[-1]) * live_rate
+                val = float(px_data['Close'].iloc[-1].item()) * live_rate
                 radar_df.append({"Symbol": t, "Price (฿)": f"{val:,.2f}"})
-        except:
-            continue
+        except: continue
     if radar_df:
         st.table(pd.DataFrame(radar_df))
 
@@ -183,6 +183,8 @@ st.divider()
 if st.button("🔄 Force Manual Sync"):
     st.rerun()
 
+# --- 5. STABLE AUTO-REFRESH ---
+# ใช้ st.empty เพื่อเลี่ยง Script Health Check 503
 st.progress(0, text=f"Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
