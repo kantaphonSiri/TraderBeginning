@@ -1,21 +1,18 @@
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
-import yfinance as yf
 import gspread
 import time
-import ccxt # <--- เพิ่มการ Import CCXT
+import ccxt
+import requests
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide")
+# --- 1. SETTINGS & INITIALIZATION ---
+st.set_page_config(page_title="Pepper Hunter AI", layout="wide")
 
-# เชื่อมต่อ Binance ผ่าน CCXT (Public Mode ไม่ต้องใช้ Key)
-exchange = ccxt.binance({
-    'enableRateLimit': True,
-    'options': {'defaultType': 'spot'}
-})
+# เชื่อมต่อ Binance (Public API - ไม่ต้องใช้ Key สำหรับดึงราคา)
+exchange = ccxt.binance({'enableRateLimit': True})
 
 # --- 2. CORE FUNCTIONS ---
 def init_gsheet():
@@ -25,31 +22,35 @@ def init_gsheet():
         creds = Credentials.from_service_account_info(creds_dict, 
                 scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
-    except: return None
+    except Exception as e:
+        st.error(f"❌ เชื่อมต่อ Google Sheets ไม่สำเร็จ: {e}")
+        return None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def get_live_thb():
-    # ส่วนนี้ยังคงใช้ yfinance ได้เพราะคู่เงิน THB=X ไม่ค่อยติด Rate Limit เหมือนคริปโต
+    """ดึงค่าเงินบาทผ่าน API เพื่อเลี่ยงปัญหา Yahoo Rate Limit"""
     try:
-        data = yf.download("THB=X", period="1d", interval="1m", progress=False)
-        if not data.empty:
-            val = data['Close'].iloc[-1]
-            return float(val.iloc[0] if hasattr(val, 'iloc') else val)
-        return 35.50
-    except: return 35.50
+        url = "https://open.er-api.com/v6/latest/USD"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            return float(res.json()['rates']['THB'])
+    except:
+        return 35.00  # ค่าเริ่มต้นกรณี API ล่ม
+    return 35.00
 
 def simulate_trade_potential(symbol, current_bal):
+    """วิเคราะห์เหรียญด้วย RSI และ EMA ผ่าน CCXT"""
     try:
-        # แปลงชื่อ Symbol ให้เข้ากับ Format ของ Binance (เช่น BTC-USD -> BTC/USDT)
+        # แปลง Symbol ให้เข้ากับ Binance (เช่น BTC-USD -> BTC/USDT)
         ccxt_symbol = symbol.replace("-USD", "/USDT")
         
-        # ดึงข้อมูลแท่งเทียน (OHLCV) 15 นาที จำนวน 100 แท่ง
+        # ดึงแท่งเทียน 15 นาที จำนวน 100 แท่ง
         ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
         
         if df.empty: return None
 
-        # คำนวณ RSI และ EMA ด้วย pandas_ta
+        # คำนวณ RSI และ EMA
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
@@ -57,6 +58,7 @@ def simulate_trade_potential(symbol, current_bal):
         last_rsi = float(df['RSI'].iloc[-1])
         last_ema = float(df['EMA_20'].iloc[-1])
         
+        # Logic การให้คะแนน (AI Scoring)
         trend = "UP" if last_price > last_ema else "DOWN"
         score = 0
         if 30 <= last_rsi <= 45 and trend == "UP": score = 95
@@ -65,8 +67,7 @@ def simulate_trade_potential(symbol, current_bal):
         else: score = 20
         
         return {"Symbol": symbol, "Price": last_price, "Score": score, "Trend": trend}
-    except Exception as e:
-        # st.error(f"Error fetching {symbol}: {e}") # เปิดไว้ดูตอน Debug ได้
+    except:
         return None
 
 # --- 3. DATA PROCESSING ---
@@ -74,6 +75,7 @@ sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
 
+# ตัวแปรเริ่มต้น
 current_bal = 1000.0
 bot_status = "OFF"
 hunting_symbol = None
@@ -84,28 +86,31 @@ if sheet:
         if recs:
             df_all = pd.DataFrame(recs)
             df_all.columns = [c.strip() for c in df_all.columns]
+            
             last_row = df_all.iloc[-1]
             current_bal = float(last_row.get('Balance', 1000))
             bot_status = last_row.get('Bot_Status', 'OFF')
+            
             if str(last_row.get('สถานะ')).upper() == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
     except Exception as e:
-        st.error(f"Sheet Read Error: {e}")
+        st.warning(f"ยังไม่มีข้อมูลใน Sheet หรืออ่านค่าไม่ได้: {e}")
 
 # --- 4. DASHBOARD UI ---
-st.title("🦔 Pepper Hunter")
-st.write(f"**Bot Status:** {bot_status} | **Current Balance:** {current_bal:,.2f} ฿")
+st.title("🦔 Pepper Hunter AI (2026 Edition)")
+st.write(f"💵 **Balance:** {current_bal:,.2f} ฿ | 🤖 **Status:** {bot_status} | 🌏 **USD/THB:** {live_rate:.2f}")
+
+# รายชื่อเหรียญที่แนะนำในปี 2026 (ดึงผ่าน Binance ได้ชัวร์)
+tickers = [
+    "BTC-USD", "ETH-USD", "SOL-USD", 
+    "NEAR-USD", "AVAX-USD", "RENDER-USD", 
+    "FET-USD", "TAO-USD", "SUI-USD", 
+    "AR-USD", "LINK-USD", "DOT-USD"
+]
 
 sim_df = pd.DataFrame()
 
-# รายชื่อเหรียญ (ใช้ Format เดิม แต่ระบบจะแปลงเป็น /USDT ให้เอง)
-tickers = [
-    "BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", 
-    "AVAX-USD", "RENDER-USD", "FET-USD", "TAO-USD", 
-    "SUI-USD", "AR-USD", "POL-USD", "LINK-USD"
-]
-
-with st.spinner('AI Brain is scanning 2026 Gems via Binance...'):
+with st.spinner('🤖 AI Brain is scanning market via Binance...'):
     results = []
     for t in tickers:
         res = simulate_trade_potential(t, current_bal)
@@ -116,39 +121,50 @@ with st.spinner('AI Brain is scanning 2026 Gems via Binance...'):
         sim_df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
 if not sim_df.empty:
-    st.subheader("🎯 Pepper Prediction (Real-time)")
+    st.subheader("🎯 AI Trading Signals")
     display_df = sim_df.copy()
     display_df['Price (฿)'] = display_df.apply(lambda x: f"{x['Price'] * live_rate:,.2f}", axis=1)
+    
+    # แสดงตารางวิเคราะห์
     st.dataframe(display_df[["Symbol", "Price (฿)", "Score", "Trend"]], use_container_width=True)
 
+    # เงื่อนไขการเข้าเทรด
     if not hunting_symbol and bot_status == "ON":
         best = sim_df.iloc[0]
-        if st.button(f"🚀 เริ่มเทรด {best['Symbol']}"):
+        st.info(f"🚀 แนะนำให้เข้าซื้อ: **{best['Symbol']}** เนื่องจากมี Score สูงสุดที่ {best['Score']}")
+        if st.button(f"Confirm Trade: {best['Symbol']}"):
             price_thb = float(best['Price']) * live_rate
+            
+            # เรียงข้อมูลตาม Column ใน Google Sheets ของคุณเป๊ะๆ
+            # วันที่, เหรียญ, สถานะ, ราคาซื้อ(฿), เงินลงทุน(฿), ราคาขาย(฿), กำไร%, Score, Balance, จำนวน, Headline, Bot_Status, News_Sentiment, News_Headline
             new_data = [
-                now_th.strftime("%d/%m/%Y %H:%M:%S"),
-                best['Symbol'],
-                "HUNTING",
-                price_thb,
-                current_bal,
-                0,
-                "0%",
-                best['Score'],
-                current_bal,
-                0,
-                "AI Entry (CCXT)",
-                "ON",
-                "Neutral",
-                "Binance Real-time Data"
+                now_th.strftime("%d/%m/%Y %H:%M:%S"), # วันที่
+                best['Symbol'],                        # เหรียญ
+                "HUNTING",                             # สถานะ
+                price_thb,                             # ราคาซื้อ(฿)
+                current_bal,                           # เงินลงทุน(฿)
+                0,                                     # ราคาขาย(฿)
+                "0%",                                  # กำไร%
+                best['Score'],                         # Score
+                current_bal,                           # Balance
+                0,                                     # จำนวน
+                "AI Scanner Entry",                    # Headline
+                "ON",                                  # Bot_Status
+                "Neutral",                             # News_Sentiment
+                "Real-time Signal from CCXT"           # News_Headline
             ]
             sheet.append_row(new_data)
-            st.success(f"Started hunting {best['Symbol']}!")
-            time.sleep(1)
+            st.success(f"บันทึกแผนการเข้าซื้อ {best['Symbol']} เรียบร้อย!")
+            time.sleep(2)
             st.rerun()
+    elif hunting_symbol:
+        st.warning(f"⚠️ กำลังล่าเหรียญ **{hunting_symbol}** อยู่... กรุณารอจนกว่าจะปิดงานใน Google Sheets")
 else:
-    st.warning("⚠️ ไม่สามารถดึงข้อมูลจาก Exchange ได้ในขณะนี้")
+    st.error("❌ ไม่สามารถดึงข้อมูล AI ได้ในขณะนี้ กรุณารีเฟรชหน้าจอ")
 
 st.divider()
-st.caption(f"Last Sync: {now_th.strftime('%H:%M:%S')} (Next sync in 5 mins)")
+st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')} | Data Provider: Binance via CCXT")
+
+# Auto Refresh ทุก 5 นาที
 time.sleep(300)
 st.rerun()
