@@ -88,10 +88,11 @@ st.write(f"**Bot Status:** {bot_status} | **Current Balance:** {current_bal:,.2f
 sim_df = pd.DataFrame()
 # คัดเลือกตามกลุ่ม: Blue Chip, AI Agent, DePIN และ RWA
 tickers = [
-    "BTC-USD", "ETH-USD", "SOL-USD",    # เสาหลัก
-    "RENDER-USD", "FET-USD", "NEAR-USD", # AI & Infrastructure (ดึงได้ปกติ)
-    "AVAX-USD", "LINK-USD", "DOT-USD",   # Layer 1 & Oracle
-    "ADA-USD", "MATIC-USD", "STX-USD"    # ตัวเสริมที่มีสภาพคล่องสูง
+    "BTC-USD", "ETH-USD", "SOL-USD",    # ตัวหลักที่ไม่มีวันตาย
+    "NEAR-USD", "AVAX-USD", "LINK-USD", # โครงสร้างพื้นฐานที่ Yahoo ดึงง่าย
+    "POL-USD",                          # นี่คือ MATIC เดิม (ต้องใช้ชื่อ POL)
+    "ADA-USD", "DOT-USD", "LTC-USD",    # กลุ่มที่สภาพคล่องสูง ข้อมูลมาไว
+    "SHIB-USD", "DOGE-USD"              # กลุ่ม Meme ที่ Yahoo ให้ความสำคัญเป็นพิเศษ
 ]
 
 with st.spinner('AI Brain is scanning 2026 Gems...'):
@@ -142,5 +143,6 @@ else:
 st.divider()
 time.sleep(300)
 st.rerun()
+
 
 
