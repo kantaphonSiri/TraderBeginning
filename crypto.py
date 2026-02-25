@@ -7,15 +7,8 @@ import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS & UI ---
+# --- 1. SETTINGS ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide")
-
-st.markdown("""
-<style>
-    .stApp { background: #0e1117; color: #e9eaeb; }
-    .metric-card { background: #1c2128; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
-</style>
-""", unsafe_allow_html=True)
 
 # --- 2. CORE FUNCTIONS ---
 def init_gsheet():
@@ -32,122 +25,110 @@ def get_live_thb():
     try:
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
         if not data.empty:
-            # ดึงค่าสุดท้ายออกมาเป็น float เพียวๆ
             val = data['Close'].iloc[-1]
             return float(val.iloc[0] if hasattr(val, 'iloc') else val)
         return 35.50
     except: return 35.50
 
-# --- 3. PREDICTIVE LOGIC ---
 def simulate_trade_potential(symbol, current_bal):
     try:
         df = yf.download(symbol, period="5d", interval="15m", progress=False)
         if df is None or df.empty: return None
-        
-        # จัดการ Multi-index columns
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
-        # ดึงค่าสุดท้ายและแปลงเป็น float
-        last_val = df['Close'].iloc[-1]
-        last_price = float(last_val.iloc[0] if hasattr(last_val, 'iloc') else last_val)
-        
-        last_rsi_val = df['RSI'].iloc[-1]
-        last_rsi = float(last_rsi_val.iloc[0] if hasattr(last_rsi_val, 'iloc') else last_rsi_val)
-        
-        last_ema_val = df['EMA_20'].iloc[-1]
-        last_ema = float(last_ema_val.iloc[0] if hasattr(last_ema_val, 'iloc') else last_ema_val)
+        last_price = float(df['Close'].iloc[-1])
+        last_rsi = float(df['RSI'].iloc[-1])
+        last_ema = float(df['EMA_20'].iloc[-1])
         
         trend = "UP" if last_price > last_ema else "DOWN"
-        
         score = 0
         if 30 <= last_rsi <= 45 and trend == "UP": score = 95
         elif last_rsi < 30: score = 85
         elif trend == "UP": score = 60
         else: score = 20
         
-        return {
-            "Symbol": symbol,
-            "Price": last_price,
-            "Score": score,
-            "Trend": trend,
-            "Action": "🔥 STRONG BUY" if score > 80 else "🔍 WATCH"
-        }
+        return {"Symbol": symbol, "Price": last_price, "Score": score, "Trend": trend}
     except: return None
 
-# --- 4. DATA PROCESSING ---
+# --- 3. DATA PROCESSING (Match Your Columns) ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
-target_bal = 10000.0
+
+# ตัวแปรเริ่มต้น
 current_bal = 1000.0
+bot_status = "OFF"
 hunting_symbol = None
-df_all = pd.DataFrame()
 
 if sheet:
     try:
         recs = sheet.get_all_records()
         if recs:
             df_all = pd.DataFrame(recs)
-            df_all.columns = df_all.columns.str.strip()
+            # ล้างชื่อคอลัมน์ให้สะอาด (ไม่มีช่องว่างแปลกปลอม)
+            df_all.columns = [c.strip() for c in df_all.columns]
+            
             last_row = df_all.iloc[-1]
             current_bal = float(last_row.get('Balance', 1000))
+            bot_status = last_row.get('Bot_Status', 'OFF')
+            
+            # เช็คสถานะการล่า
             if str(last_row.get('สถานะ')).upper() == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
-    except: pass
+    except Exception as e:
+        st.error(f"Sheet Read Error: {e}")
 
-# --- 5. DASHBOARD UI ---
+# --- 4. DASHBOARD UI ---
 st.title("🦔 Pepper Hunter")
+st.write(f"**Bot Status:** {bot_status} | **Current Balance:** {current_bal:,.2f} ฿")
 
 sim_df = pd.DataFrame()
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD", "DOT-USD"]
 
-with st.spinner('AI Brain is simulating trades...'):
-    sim_results = []
+with st.spinner('AI Brain is scanning...'):
+    results = []
     for t in tickers:
         res = simulate_trade_potential(t, current_bal)
-        if res: sim_results.append(res)
-    
-    if sim_results:
-        sim_df = pd.DataFrame(sim_results).sort_values(by="Score", ascending=False)
+        if res: results.append(res)
+    if results:
+        sim_df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
 if not sim_df.empty:
-    # แก้ไขส่วนราคาให้เป็นตัวเลขที่ฟอร์แมตได้
+    st.subheader("🎯 AI Prediction")
     display_df = sim_df.copy()
     display_df['Price (฿)'] = display_df.apply(lambda x: f"{x['Price'] * live_rate:,.2f}", axis=1)
-    
-    st.subheader("🎯 AI Trading Simulation Results")
-    st.dataframe(display_df[["Symbol", "Price (฿)", "Score", "Trend", "Action"]], use_container_width=True)
-    
-    st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("### 📈 Roadmap to 10,000 ฿")
-        trades_needed = (target_bal / current_bal) / 0.05
-        st.info(f"ต้องการชนะอีกประมาณ **{int(trades_needed) + 1} ไม้** (ไม้ละ 5%)")
+    st.dataframe(display_df[["Symbol", "Price (฿)", "Score", "Trend"]], use_container_width=True)
 
-    with col2:
-        if not hunting_symbol:
-            best = sim_df.iloc[0]
-            st.write(f"### 🚀 แผนแนะนำถัดไป: {best['Symbol']}")
-            if st.button(f"ยืนยันเริ่มแผน: {best['Symbol']}"):
-                thb_p = float(best['Price']) * live_rate
-                sheet.append_row([
-                    now_th.strftime("%d-%m-%Y %H:%M"), 
-                    best['Symbol'], "HUNTING", thb_p, 
-                    current_bal, 0, "0%", 0, current_bal
-                ])
-                st.rerun()
-        else:
-            st.warning(f"กำลังถือเหรียญ {hunting_symbol} อยู่...")
+    if not hunting_symbol and bot_status == "ON":
+        best = sim_df.iloc[0]
+        if st.button(f"🚀 เริ่มเทรด {best['Symbol']}"):
+            price_thb = float(best['Price']) * live_rate
+            # บันทึกตามลำดับ Column ใน Sheet ของคุณเป๊ะๆ
+            # วันที่, เหรียญ, สถานะ, ราคาซื้อ(฿), เงินลงทุน(฿), ราคาขาย(฿), กำไร%, Score, Balance, จำนวน, Headline, Bot_Status, News_Sentiment, News_Headline
+            new_data = [
+                now_th.strftime("%d/%m/%Y %H:%M:%S"), # วันที่
+                best['Symbol'],                        # เหรียญ
+                "HUNTING",                             # สถานะ
+                price_thb,                             # ราคาซื้อ(฿)
+                current_bal,                           # เงินลงทุน(฿)
+                0,                                     # ราคาขาย(฿)
+                "0%",                                  # กำไร%
+                best['Score'],                         # Score
+                current_bal,                           # Balance
+                0,                                     # จำนวน
+                "AI Entry",                            # Headline
+                "ON",                                  # Bot_Status
+                "Neutral",                             # News_Sentiment
+                "Bot Start Trading"                    # News_Headline
+            ]
+            sheet.append_row(new_data)
+            st.rerun()
 else:
-    st.warning("ไม่สามารถดึงข้อมูล AI ได้ในขณะนี้ กรุณาลองใหม่")
+    st.warning("ดึงราคาจาก Yahoo ไม่สำเร็จ (Rate Limit) กรุณารอสักครู่แล้วลองใหม่")
 
 st.divider()
-st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
-
