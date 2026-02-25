@@ -10,42 +10,42 @@ from datetime import datetime, timedelta, timezone
 # --- 1. SETTINGS ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide")
 
-# --- 2. AI & ML LOGIC ---
-def analyze_coin_potential(symbol, budget):
+# --- 2. PREDICTIVE LOGIC (จำลองความน่าจะเป็น) ---
+def simulate_trade_potential(symbol, current_bal, target_bal):
     try:
         df = yf.download(symbol, period="5d", interval="15m", progress=False)
         if df.empty: return None
         
+        # สร้าง Features สำหรับ AI
         df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
+        df['EMA_20'] = ta.ema(df['Close'], length=20)
         
         last_rsi = df['RSI'].iloc[-1]
-        last_price = df['Close'].iloc[-1].item() # ใช้ .item() กัน FutureWarning
-        volatility = (df['ATR'].iloc[-1] / last_price) * 100
+        last_price = df['Close'].iloc[-1].item()
+        trend = "UP" if last_price > df['EMA_20'].iloc[-1] else "DOWN"
         
+        # จำลอง Score (Prediction Model เบื้องต้น)
         score = 0
-        if 30 <= last_rsi <= 45: score += 50
-        elif last_rsi < 30: score += 80
-        if volatility < 2.0: score += 20
+        if 30 <= last_rsi <= 45 and trend == "UP": score = 95 # จุดกลับตัวที่แข็งแกร่ง
+        elif last_rsi < 30: score = 85 # จุดขายมากเกินไป
+        elif trend == "UP": score = 60 # ตามเทรนด์
+        
+        # คำนวณความคุ้มค่า (Risk/Reward Simulation)
+        expected_profit = current_bal * 0.05 # เป้า 5%
+        prob_success = score / 100
+        expected_value = expected_profit * prob_success
         
         return {
             "Symbol": symbol,
-            "Score": score,
-            "RSI": round(last_rsi, 2),
             "Price": round(last_price, 4),
-            "Risk": "Low" if volatility < 1.5 else "High",
-            "Action": "Strong Buy" if score > 70 else "Wait"
+            "Score": score,
+            "Trend": trend,
+            "Exp_Value": round(expected_value, 2),
+            "Action": "🔥 HIGH PROB" if score > 80 else "🔍 SCANNING"
         }
     except: return None
 
 # --- 3. CORE FUNCTIONS ---
-@st.cache_data(ttl=300)
-def get_live_thb():
-    try:
-        data = yf.download("THB=X", period="1d", interval="1m", progress=False)
-        return float(data['Close'].iloc[-1].item()) if not data.empty else 35.50
-    except: return 35.50
-
 def init_gsheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -55,95 +55,71 @@ def init_gsheet():
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
     except: return None
 
-# --- 4. DATA PROCESSING (Read & Auto-Update) ---
+@st.cache_data(ttl=300)
+def get_live_thb():
+    data = yf.download("THB=X", period="1d", interval="1m", progress=False)
+    return float(data['Close'].iloc[-1].item()) if not data.empty else 35.50
+
+# --- 4. PROCESSING ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
-current_total_bal = 1000.0
+target_bal = 10000.0
+current_bal = 1000.0
 hunting_symbol = None
-entry_p_thb = 0.0
-df_all = pd.DataFrame()
 
 if sheet:
-    try:
-        recs = sheet.get_all_records()
-        if recs:
-            df_all = pd.DataFrame(recs)
-            df_all.columns = df_all.columns.str.strip()
-            last_row = df_all.iloc[-1]
-            
-            # ดึงค่าจาก Sheet
-            current_total_bal = float(last_row.get('Balance', 1000))
-            status = last_row.get('สถานะ')
-            
-            if status == 'HUNTING':
-                hunting_symbol = last_row.get('เหรียญ')
-                entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-                
-                # --- AUTO EXIT LOGIC (เช็คเพื่อบันทึกปิดออเดอร์) ---
-                ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
-                if not ticker.empty:
-                    cur_p_usd = float(ticker['Close'].iloc[-1].item())
-                    cur_p_thb = cur_p_usd * live_rate
-                    pnl = ((cur_p_thb - entry_p_thb) / entry_p_thb) * 100
-                    
-                    if pnl >= 5.0 or pnl <= -3.0:
-                        new_bal = current_total_bal * (1 + (pnl/100))
-                        # บันทึกบรรทัดใหม่ลง Sheet เมื่อปิดออเดอร์
-                        sheet.append_row([
-                            now_th.strftime("%d-%m-%Y %H:%M"), # Format วันที่
-                            hunting_symbol, "CLOSED", entry_p_thb, 
-                            current_total_bal, cur_p_thb, f"{pnl:.2f}%", 0, new_bal
-                        ])
-                        st.rerun()
-    except Exception as e:
-        st.error(f"Sheet Error: {e}")
+    recs = sheet.get_all_records()
+    if recs:
+        df_all = pd.DataFrame(recs)
+        df_all.columns = df_all.columns.str.strip()
+        last_row = df_all.iloc[-1]
+        current_bal = float(last_row.get('Balance', 1000))
+        if last_row.get('สถานะ') == 'HUNTING':
+            hunting_symbol = last_row.get('เหรียญ')
+            entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
 
-# --- 5. DASHBOARD UI ---
+# --- 5. DASHBOARD ---
 st.title("🦔 Pepper Hunter")
 
-c1, c2, c3 = st.columns(3)
-with c1: st.metric("Portfolio Balance", f"{current_total_bal:,.2f} ฿")
-with c2: st.metric("USD/THB", f"฿{live_rate:.2f}")
-with c3: st.metric("Status", hunting_symbol if hunting_symbol else "Scanning...")
+# AI Prediction Section
+st.subheader("🎯 AI Trading Simulation (Prediction)")
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
+sim_results = []
+for t in tickers:
+    res = simulate_trade_potential(t, current_bal, target_bal)
+    if res: sim_results.append(res)
 
-col_left, col_right = st.columns([2, 1])
-
-with col_left:
-    st.subheader("🔍 AI Market Scanning")
-    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "DOT-USD"]
+if sim_results:
+    sim_df = pd.DataFrame(sim_results).sort_values(by="Score", ascending=False)
     
-    with st.spinner('AI is analyzing coins...'):
-        recommendations = []
-        for t in tickers:
-            analysis = analyze_coin_potential(t, current_total_bal)
-            if analysis: recommendations.append(analysis)
-    
-    if recommendations:
-        rec_df = pd.DataFrame(recommendations).sort_values(by="Score", ascending=False)
-        st.dataframe(rec_df, use_container_width=True)
-        
-        best_coin = rec_df.iloc[0]
-        if best_coin['Score'] > 60:
-            st.success(f"🎯 AI Recommendation: **{best_coin['Symbol']}** (Score: {best_coin['Score']})")
-            
-            # เพิ่มปุ่มสำหรับบันทึกการซื้อลง Sheet
-            if not hunting_symbol:
-                if st.button(f"🚀 Start Hunting {best_coin['Symbol']}"):
-                    thb_price = best_coin['Price'] * live_rate
-                    sheet.append_row([
-                        now_th.strftime("%d-%m-%Y %H:%M"),
-                        best_coin['Symbol'], "HUNTING", thb_price, 
-                        current_total_bal, 0, "0%", 0, current_total_bal
-                    ])
-                    st.rerun()
+    # แสดงตารางวิเคราะห์
+    cols = st.columns(len(sim_results[:4]))
+    for i, row in enumerate(sim_results[:4]):
+        with cols[i]:
+            st.metric(row['Symbol'], f"{row['Score']}% Prob", delta=row['Trend'])
+            st.caption(f"คาดการณ์กำไร: {row['Exp_Value']} ฿")
 
-with col_right:
-    st.subheader("📊 Trade History (Sheets)")
-    if not df_all.empty:
-        st.dataframe(df_all[['วันที่', 'เหรียญ', 'สถานะ', 'Balance']].tail(5))
+    st.dataframe(sim_df, use_container_width=True)
+
+# ส่วนการคำนวณเป้าหมาย
+st.divider()
+col1, col2 = st.columns(2)
+with col1:
+    st.write("### 📈 Roadmap to 10,000 ฿")
+    trades_needed = (target_bal / current_bal) / 0.05 # สมมติกำไรไม้ละ 5%
+    st.info(f"หากทำกำไรเฉลี่ยไม้ละ 5% คุณต้องชนะอีกประมาณ **{int(trades_needed)} ไม้** เพื่อถึงเป้าหมาย")
+
+with col2:
+    if not hunting_symbol:
+        best = sim_df.iloc[0]
+        st.write(f"### 🚀 แนะนำแผนการเทรดถัดไป")
+        if st.button(f"ยืนยันเริ่มแผนล่า: {best['Symbol']}"):
+            thb_price = best['Price'] * live_rate
+            sheet.append_row([now_th.strftime("%d-%m-%Y %H:%M"), best['Symbol'], "HUNTING", thb_price, current_bal, 0, "0%", 0, current_bal])
+            st.rerun()
 
 st.divider()
-st.info(f"Last AI Sync: {now_th.strftime('%H:%M:%S')}")
+st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
