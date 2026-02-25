@@ -103,7 +103,7 @@ if sheet:
 st.title("🦔 Pepper Hunter")
 
 sim_df = pd.DataFrame()
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD"]
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
 
 with st.spinner('AI Brain is simulating trades...'):
     sim_results = []
@@ -136,7 +136,7 @@ if not sim_df.empty:
             if st.button(f"ยืนยันเริ่มแผน: {best['Symbol']}"):
                 thb_p = float(best['Price']) * live_rate
                 sheet.append_row([
-                    now_th.strftime("%Y-%m-%d %H:%M"), 
+                    now_th.strftime("%d-%m-%Y %H:%M"), 
                     best['Symbol'], "HUNTING", thb_p, 
                     current_bal, 0, "0%", 0, current_bal
                 ])
@@ -150,3 +150,4 @@ st.divider()
 st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
