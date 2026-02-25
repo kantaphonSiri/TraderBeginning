@@ -86,13 +86,23 @@ st.title("🦔 Pepper Hunter")
 st.write(f"**Bot Status:** {bot_status} | **Current Balance:** {current_bal:,.2f} ฿")
 
 sim_df = pd.DataFrame()
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD", "DOT-USD"]
+# คัดเลือกตามกลุ่ม: Blue Chip, AI Agent, DePIN และ RWA
+tickers = [
+    "BTC-USD", "ETH-USD", "SOL-USD",   # กลุ่มเสาหลัก (High Liquidity)
+    "RENDER-USD", "FET-USD", "TAO-USD", # กลุ่ม AI & Compute (Trend 2026)
+    "NEAR-USD", "AVAX-USD", "SUI-USD",  # กลุ่ม Layer 1 ดาวรุ่ง
+    "LINK-USD", "ONDO-USD", "AR-USD"    # กลุ่ม Oracle, RWA และ Storage
+]
 
-with st.spinner('AI Brain is scanning...'):
+with st.spinner('AI Brain is scanning 2026 Gems...'):
     results = []
     for t in tickers:
         res = simulate_trade_potential(t, current_bal)
-        if res: results.append(res)
+        if res:
+            results.append(res)
+        # เพิ่ม sleep 1 วินาที ระหว่างเหรียญ เพื่อหลบการตรวจจับของ Yahoo
+        time.sleep(1) 
+    
     if results:
         sim_df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
@@ -132,3 +142,4 @@ else:
 st.divider()
 time.sleep(300)
 st.rerun()
+
