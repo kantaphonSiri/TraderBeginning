@@ -39,18 +39,16 @@ def get_live_thb():
     return 35.00
 
 def simulate_trade_potential(symbol, current_bal):
-    """วิเคราะห์เหรียญด้วย RSI และ EMA ผ่าน CCXT"""
     try:
-        # แปลง Symbol ให้เข้ากับ Binance (เช่น BTC-USD -> BTC/USDT)
         ccxt_symbol = symbol.replace("-USD", "/USDT")
-        
-        # ดึงแท่งเทียน 15 นาที จำนวน 100 แท่ง
+        # เพิ่ม timeout เพื่อไม่ให้แอปรอนานเกินไปถ้า network มีปัญหา
         ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
+        
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
         
-        if df.empty: return None
+        if df.empty: 
+            return None
 
-        # คำนวณ RSI และ EMA
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
@@ -58,17 +56,26 @@ def simulate_trade_potential(symbol, current_bal):
         last_rsi = float(df['RSI'].iloc[-1])
         last_ema = float(df['EMA_20'].iloc[-1])
         
-        # Logic การให้คะแนน (AI Scoring)
         trend = "UP" if last_price > last_ema else "DOWN"
-        score = 0
-        if 30 <= last_rsi <= 45 and trend == "UP": score = 95
-        elif last_rsi < 30: score = 85
-        elif trend == "UP": score = 60
-        else: score = 20
+        score = 95 if (30 <= last_rsi <= 45 and trend == "UP") else (85 if last_rsi < 30 else 50)
         
         return {"Symbol": symbol, "Price": last_price, "Score": score, "Trend": trend}
-    except:
+    except Exception as e:
+        # พิมพ์ Error ออกมาทางหน้าจอตอนสแกน เพื่อให้เรารู้ว่าพังเพราะอะไร
+        st.sidebar.error(f"⚠️ {symbol}: {str(e)}") 
         return None
+
+# --- ส่วนการสแกนที่ทนทานขึ้น ---
+with st.spinner('🤖 AI Brain is scanning...'):
+    results = []
+    # ลองทดสอบด้วยเหรียญหลักแค่ 3 ตัวก่อนเพื่อดูว่า API ทำงานไหม
+    test_tickers = ["BTC-USD", "ETH-USD", "SOL-USD"] 
+    
+    for t in test_tickers:
+        res = simulate_trade_potential(t, current_bal)
+        if res:
+            results.append(res)
+        time.sleep(0.5) # เว้นจังหวะนิดนึง
 
 # --- 3. DATA PROCESSING ---
 sheet = init_gsheet()
@@ -168,3 +175,4 @@ st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')} | Data Provider
 # Auto Refresh ทุก 5 นาที
 time.sleep(300)
 st.rerun()
+
