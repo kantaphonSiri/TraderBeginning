@@ -147,14 +147,33 @@ with col_left:
                 else: st.info("Waiting for more trade history to plot...")
             except: st.error("Chart Rendering Error")
 
-    st.write("#### 🔍 Market Intelligence Radar")
-    # Quick Market Scan
+   st.write("#### 🔍 Market Intelligence Radar")
+    # Quick Market Scan ด้วยความปลอดภัยที่มากขึ้น
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD"]
     radar_df = []
+    
     for t in tickers:
-        p = yf.download(t, period="1d", interval="1m", progress=False)['Close'].iloc[-1] * live_rate
-        radar_df.append({"Symbol": t, "Price (฿)": f"{p:,.2f}"})
-    st.table(pd.DataFrame(radar_df))
+        try:
+            # ดึงข้อมูลย้อนหลัง 1 วันเพื่อให้แน่ใจว่ามีข้อมูลแน่นอน
+            ticker_data = yf.download(t, period="1d", interval="1m", progress=False)
+            
+            if not ticker_data.empty:
+                # ดึงราคาล่าสุดที่ไม่ใช่ NaN
+                p_raw = ticker_data['Close'].iloc[-1]
+                
+                # ตรวจสอบว่า p_raw เป็นตัวเลขจริงหรือไม่
+                if pd.notnull(p_raw):
+                    p = float(p_raw) * live_rate
+                    radar_df.append({"Symbol": t, "Price (฿)": f"{p:,.2f}"})
+                else:
+                    radar_df.append({"Symbol": t, "Price (฿)": "Data Pending"})
+            else:
+                radar_df.append({"Symbol": t, "Price (฿)": "N/A"})
+        except Exception:
+            radar_df.append({"Symbol": t, "Price (฿)": "Error"})
+            
+    if radar_df:
+        st.table(pd.DataFrame(radar_df))
 
 with col_right:
     st.subheader("🤖 AI Strategist")
@@ -202,3 +221,4 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
