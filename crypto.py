@@ -9,10 +9,13 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
 # --- 1. SETTINGS & INITIALIZATION ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide")
+st.set_page_config(page_title="Pepper Hunter AI", layout="wide")
 
-# เชื่อมต่อ Binance 
-exchange = ccxt.binance({'enableRateLimit': True})
+# เปลี่ยนจาก binance เป็น kucoin (เสถียรกว่าบน Cloud Server และดึงข้อมูลสาธารณะได้เหมือนกัน)
+exchange = ccxt.kucoin({
+    'enableRateLimit': True,
+    'options': {'defaultType': 'spot'}
+})
 
 # --- 2. CORE FUNCTIONS ---
 def init_gsheet():
@@ -37,9 +40,13 @@ def get_live_thb():
         return 35.00
     return 35.00
 
+# ฟังก์ชันเดิมไม่ต้องแก้ แต่ KuCoin ใช้ชื่อเหรียญแบบเดิมได้เลย (BTC/USDT)
 def simulate_trade_potential(symbol, current_bal):
     try:
+        # แปลงชื่อ Symbol ให้เข้ากับ Format ของ KuCoin (BTC-USD -> BTC/USDT)
         ccxt_symbol = symbol.replace("-USD", "/USDT")
+        
+        # ดึง OHLCV (KuCoin รองรับ fetch_ohlcv เหมือนกัน)
         ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
         
@@ -53,15 +60,11 @@ def simulate_trade_potential(symbol, current_bal):
         last_ema = float(df['EMA_20'].iloc[-1])
         
         trend = "UP" if last_price > last_ema else "DOWN"
-        score = 0
-        if 30 <= last_rsi <= 45 and trend == "UP": score = 95
-        elif last_rsi < 30: score = 85
-        elif trend == "UP": score = 60
-        else: score = 20
+        score = 95 if (30 <= last_rsi <= 45 and trend == "UP") else (85 if last_rsi < 30 else 50)
         
         return {"Symbol": symbol, "Price": last_price, "Score": score, "Trend": trend}
     except Exception as e:
-        # แสดง error ใน sidebar เพื่อ debug แต่ไม่ทำแอปค้าง
+        # ถ้า KuCoin ตัวนี้ไม่มีเหรียญนี้ ให้ลองเปลี่ยน /USDT เป็น -USDT หรือชื่ออื่น
         st.sidebar.warning(f"Scan error {symbol}: {e}")
         return None
 
@@ -144,3 +147,4 @@ st.caption(f"Last Prediction Sync: {now_th.strftime('%H:%M:%S')}")
 # Auto Refresh 5 mins
 time.sleep(300)
 st.rerun()
+
