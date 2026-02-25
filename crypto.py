@@ -38,7 +38,8 @@ def get_live_thb():
     try:
         data = yf.download("THB=X", period="1d", interval="1m", progress=False)
         return float(data['Close'].iloc[-1])
-    except: return 35.50
+    except:
+        return 35.50
 
 def init_gsheet():
     try:
@@ -47,14 +48,17 @@ def init_gsheet():
         creds = Credentials.from_service_account_info(creds_dict, 
                 scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
-    except: return None
+    except:
+        return None
 
 def calculate_kelly_size(win_rate_pct, avg_win_pct, avg_loss_pct):
     p = win_rate_pct / 100
     q = 1 - p
-    if avg_loss_pct == 0: return 0.1
+    if avg_loss_pct == 0:
+        return 0.1
     b = abs(avg_win_pct / avg_loss_pct)
-    if b == 0: return 0.01
+    if b == 0:
+        return 0.01
     kelly_f = (b * p - q) / b
     return max(0.01, min(kelly_f / 2, 0.25))
 
@@ -75,11 +79,9 @@ if sheet:
         if recs:
             df_all = pd.DataFrame(recs)
             df_all.columns = df_all.columns.str.strip()
-            
             last_row = df_all.iloc[-1]
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
-            
             if status == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
                 entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
@@ -104,15 +106,18 @@ if sheet:
                         sheet.append_row([now_th.strftime("%Y-%m-%d %H:%M"), hunting_symbol, "CLOSED", entry_p_thb, next_invest, cur_p, f"{pnl:.2f}%", 0, new_bal, 0, "AUTO_EXIT", "DONE", "N/A", "System Close"])
                         st.rerun()
     except Exception as e:
-        st.error(f"Data processing error: {e}")
+        st.error(f"Data error: {e}")
 
 # --- 4. DASHBOARD UI ---
 st.title("🦔 Pepper Hunter")
 
 c1, c2, c3, c4 = st.columns(4)
-with c1: st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
-with c2: st.metric("Win Rate", f"{win_rate:.1f}%")
-with c3: st.metric("Live USD/THB", f"฿{live_rate:.2f}")
+with c1:
+    st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
+with c2:
+    st.metric("Win Rate", f"{win_rate:.1f}%")
+with c3:
+    st.metric("Live USD/THB", f"฿{live_rate:.2f}")
 with c4:
     status_html = f'<span class="status-hunting">HUNTING {hunting_symbol}</span>' if hunting_symbol else '<span class="status-scanning">SCANNING</span>'
     st.markdown(f'<div class="trade-card"><small>SYSTEM STATUS</small><br>{status_html}</div>', unsafe_allow_html=True)
@@ -139,11 +144,13 @@ with col_left:
                 df_chart = df_chart.dropna().sort_values('วันที่').set_index('วันที่')
                 if len(df_chart) >= 2:
                     st.line_chart(df_chart['Balance'], height=250, color="#38bdf8")
-                else: st.info("Waiting for more trade history to plot...")
-            except: pass
+                else:
+                    st.info("Waiting for more trade history...")
+            except:
+                pass
 
     st.write("#### 🔍 Market Intelligence Radar")
-    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD"]
+    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD"]
     radar_df = []
     for t in tickers:
         try:
@@ -151,12 +158,13 @@ with col_left:
             if not px_data.empty:
                 val = float(px_data['Close'].iloc[-1]) * live_rate
                 radar_df.append({"Symbol": t, "Price (฿)": f"{val:,.2f}"})
-        except: continue
+        except:
+            continue
     if radar_df:
         st.table(pd.DataFrame(radar_df))
 
 with col_right:
-    st.subheader("🤖 Pepper Strategist")
+    st.subheader("🤖 AI Strategist")
     target_date = datetime(2026, 3, 31).date()
     days_left = max((target_date - now_th.date()).days, 1)
     target_amount = 10000.0
@@ -167,7 +175,7 @@ with col_right:
         <small style="color: #38bdf8;">TARGET ANALYTICS</small><br>
         <b>เป้าหมาย:</b> {target_amount:,.0f} ฿<br>
         <b>เหลือเวลา:</b> {days_left} วัน<br>
-        <b>Growth Needed:</b> <span style="color:#00ff88;">{daily_rate_needed*100:.2f}% / วัน</span>
+        <b>Growth:</b> <span style="color:#00ff88;">{daily_rate_needed*100:.2f}% / วัน</span>
     </div>
     """, unsafe_allow_html=True)
     
@@ -175,11 +183,10 @@ with col_right:
         kelly = calculate_kelly_size(win_rate, avg_win, avg_loss)
         st.info(f"🧠 AI Recommendation\n\nลงเงินไม้ถัดไป: **{(current_total_bal * kelly):,.2f} ฿**")
 
-# --- FOOTER ---
 st.divider()
 if st.button("🔄 Force Manual Sync"):
     st.rerun()
 
-st.progress(0, text=f"Update Cycle Active | {now_th.strftime('%H:%M:%S')}")
+st.progress(0, text=f"Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
