@@ -7,30 +7,30 @@ import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS ---
+# --- 1. SETTINGS & UI ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
-    <style>
-    .stApp { background: #0e1117; color: #e9eaeb; }
-    .trade-card {
-        background: #1c2128;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 10px;
-    }
-    .status-hunting { color: #ff4b4b; font-weight: bold; }
-    .status-scanning { color: #00ff88; font-weight: bold; }
-    .ai-box {
-        background: #1e293b;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #38bdf8;
-    }
-    [data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.stApp { background: #0e1117; color: #e9eaeb; }
+.trade-card {
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 10px;
+}
+.status-hunting { color: #ff4b4b; font-weight: bold; }
+.status-scanning { color: #00ff88; font-weight: bold; }
+.ai-box {
+    background: #1e293b;
+    padding: 15px;
+    border-radius: 10px;
+    border-left: 5px solid #38bdf8;
+}
+[data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- 2. CORE FUNCTIONS ---
 @st.cache_data(ttl=60)
@@ -54,11 +54,9 @@ def init_gsheet():
 def calculate_kelly_size(win_rate_pct, avg_win_pct, avg_loss_pct):
     p = win_rate_pct / 100
     q = 1 - p
-    if avg_loss_pct == 0:
-        return 0.1
+    if avg_loss_pct == 0: return 0.1
     b = abs(avg_win_pct / avg_loss_pct)
-    if b == 0:
-        return 0.01
+    if b == 0: return 0.01
     kelly_f = (b * p - q) / b
     return max(0.01, min(kelly_f / 2, 0.25))
 
@@ -146,7 +144,7 @@ with col_left:
             except:
                 pass
 
-    # บรรทัดที่ 150 อยู่ตรงนี้ครับ ถูกจัดระดับใหม่แล้ว
+    # บรรทัดที่ 150 ที่เคยมีปัญหา
     st.write("#### 🔍 Market Intelligence Radar")
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD"]
     radar_df = []
@@ -162,7 +160,7 @@ with col_left:
         st.table(pd.DataFrame(radar_df))
 
 with col_right:
-    st.subheader("🤖 AI Strategist")
+    st.subheader("🤖 Pepper Strategist")
     target_date = datetime(2026, 3, 31).date()
     days_left = max((target_date - now_th.date()).days, 1)
     target_amount = 10000.0
