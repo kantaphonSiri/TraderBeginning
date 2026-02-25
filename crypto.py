@@ -56,14 +56,13 @@ def calculate_kelly_size(win_rate_pct, avg_win_pct, avg_loss_pct):
     b = abs(avg_win_pct / avg_loss_pct)
     if b == 0: return 0.01
     kelly_f = (b * p - q) / b
-    return max(0.01, min(kelly_f / 2, 0.25)) # Conservative Half-Kelly
+    return max(0.01, min(kelly_f / 2, 0.25))
 
 # --- 3. DATA PROCESSING ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
 now_th = datetime.now(timezone(timedelta(hours=7)))
 
-# Init variables
 current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
@@ -86,10 +85,8 @@ if sheet:
                 hunting_symbol = last_row.get('เหรียญ')
                 entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
             
-            # AI & Stats Calculation
             closed_trades = df_all[df_all['สถานะ'] == 'CLOSED'].copy()
             if not closed_trades.empty:
-                # Clean Profit/Loss column
                 closed_trades['pnl_num'] = closed_trades['กำไร%'].replace('%','', regex=True).astype(float)
                 wins = closed_trades[closed_trades['pnl_num'] > 0]
                 losses = closed_trades[closed_trades['pnl_num'] < 0]
@@ -98,7 +95,6 @@ if sheet:
                 avg_win = wins['pnl_num'].mean() if not wins.empty else 0
                 avg_loss = losses['pnl_num'].mean() if not losses.empty else 0
                 
-            # Auto-Exit Logic
             if status == 'HUNTING' and hunting_symbol:
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
                 if not ticker.empty:
@@ -148,42 +144,28 @@ with col_left:
             except: st.error("Chart Rendering Error")
 
     st.write("#### 🔍 Market Intelligence Radar")
-    # Quick Market Scan ด้วยความปลอดภัยที่มากขึ้น
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
     radar_df = []
     
     for t in tickers:
         try:
-            # ดึงข้อมูลย้อนหลัง 1 วันเพื่อให้แน่ใจว่ามีข้อมูลแน่นอน
             ticker_data = yf.download(t, period="1d", interval="1m", progress=False)
-            
             if not ticker_data.empty:
-                # ดึงราคาล่าสุดที่ไม่ใช่ NaN
                 p_raw = ticker_data['Close'].iloc[-1]
-                
-                # ตรวจสอบว่า p_raw เป็นตัวเลขจริงหรือไม่
                 if pd.notnull(p_raw):
                     p = float(p_raw) * live_rate
                     radar_df.append({"Symbol": t, "Price (฿)": f"{p:,.2f}"})
-                else:
-                    radar_df.append({"Symbol": t, "Price (฿)": "Data Pending"})
-            else:
-                radar_df.append({"Symbol": t, "Price (฿)": "N/A"})
-        except Exception:
-            radar_df.append({"Symbol": t, "Price (฿)": "Error"})
+        except: continue
             
     if radar_df:
         st.table(pd.DataFrame(radar_df))
 
 with col_right:
     st.subheader("🤖 AI Strategist")
-    
-    # Target Forecasting
     target_date = datetime(2026, 3, 31).date() 
-    days_left = (target_date - now_th.date()).days
+    days_left = max((target_date - now_th.date()).days, 1)
     target_amount = 10000.0
-    
-    daily_rate_needed = ((target_amount / current_total_bal) ** (1/max(days_left, 1))) - 1
+    daily_rate_needed = ((target_amount / current_total_bal) ** (1/days_left)) - 1
     
     st.markdown(f"""
     <div class="ai-box">
@@ -196,20 +178,17 @@ with col_right:
     
     st.divider()
     
-    # Kelly Management
     if win_rate > 0:
         kelly_perc = calculate_kelly_size(win_rate, avg_win, avg_loss)
         ai_invest = current_total_bal * kelly_perc
-        
         st.write("#### 🧠 Risk Management")
         st.write(f" Win Rate จริง: **{win_rate:.1f}%**")
         st.info(f"AI แนะนำลงทุนไม้ถัดไป: **{ai_invest:,.2f} ฿**")
-        st.caption(f"Calculated by Kelly Criterion (Half-Kelly)")
-        
-        # Pattern Recognition (Simple)
-        if not closed_trades.empty:
-            best_asset = closed_trades.groupby('เหรียญ').size().idxmax()
-            st.success(f"💡 AI Hint: คุณเทรด {best_asset} บ่อยที่สุด โฟกัสความถนัดเดิมเพื่อกำไรที่เสถียร")
+        if not df_all.empty:
+            closed_trades = df_all[df_all['สถานะ'] == 'CLOSED']
+            if not closed_trades.empty:
+                best_asset = closed_trades.groupby('เหรียญ').size().idxmax()
+                st.success(f"💡 AI Hint: คุณเทรด {best_asset} บ่อยที่สุด")
     else:
         st.warning("กำลังสะสมข้อมูลเพื่อเริ่มวิเคราะห์แผน...")
 
@@ -221,6 +200,3 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
-
-
-
