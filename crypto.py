@@ -8,17 +8,12 @@ import requests
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS ---
+# --- 1. SETTINGS & GOALS ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide")
+TARGET_BAL = 10000.0
 exchange = ccxt.kucoin({'enableRateLimit': True})
 
-# เป้าหมายกำไร
-TARGET_PROFIT = 10000.0
-# ตั้งค่า Take Profit 3% และ Stop Loss 1.5% ต่อรอบเพื่อรักษาพอร์ต
-TP_PCT = 3.0
-SL_PCT = 1.5
-
-# (ฟังก์ชัน init_gsheet และ get_live_thb ใช้ตัวเดิม)
+# --- 2. CORE FUNCTIONS ---
 def init_gsheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -31,16 +26,16 @@ def init_gsheet():
 @st.cache_data(ttl=1800)
 def get_live_thb():
     try:
-        url = "https://open.er-api.com/v6/latest/USD"
-        res = requests.get(url, timeout=10)
+        res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
         return float(res.json()['rates']['THB']) if res.status_code == 200 else 35.0
     except: return 35.0
 
-def simulate_trade_potential(symbol):
+def analyze_market(symbol):
     try:
         ccxt_symbol = symbol.replace("-USD", "/USDT")
         ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
@@ -48,13 +43,18 @@ def simulate_trade_potential(symbol):
         last_rsi = float(df['RSI'].iloc[-1])
         last_ema = float(df['EMA_20'].iloc[-1])
         
-        # AI Scoring: เน้นเข้าซื้อตอน RSI ต่ำและเริ่มกลับตัวเหนือ EMA
+        # กลยุทธ์: ซื้อเมื่อ RSI ต่ำ (Oversold) และเริ่มกลับตัว (Above EMA)
         trend = "UP" if last_p > last_ema else "DOWN"
-        score = 95 if (last_rsi < 40 and trend == "UP") else (85 if last_rsi < 30 else 50)
-        return {"Symbol": symbol, "Price": last_p, "Score": score, "Trend": trend}
+        score = 0
+        if last_rsi < 35 and trend == "UP": score = 95
+        elif last_rsi < 30: score = 90
+        elif trend == "UP": score = 60
+        else: score = 20
+        
+        return {"Symbol": symbol, "Price": last_p, "Score": score, "Trend": trend, "RSI": last_rsi}
     except: return None
 
-# --- 2. EXECUTION LOGIC ---
+# --- 3. DATA PROCESSING ---
 current_bal = 1000.0
 bot_status = "OFF"
 hunting_symbol = None
@@ -76,48 +76,55 @@ if sheet:
             hunting_symbol = last_row.get('เหรียญ')
             entry_price_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
 
+# --- 4. UI & AUTO-PILOT ---
 st.title("🦔 Pepper Hunter")
-progress = min(current_bal / TARGET_PROFIT, 1.0)
-st.progress(progress, text=f"Progress to 10,000 ฿: {progress*100:.2f}%")
+progress = min(current_bal / TARGET_BAL, 1.0)
+st.progress(progress, text=f"Progress: {current_bal:,.2f} / {TARGET_BAL:,.2f} ฿")
 
-# --- 3. AUTO TRADE ACTION ---
 if bot_status == "ON":
     if hunting_symbol:
-        # CHECK TO SELL (ปิดงาน)
-        res = simulate_trade_potential(hunting_symbol)
+        # ระบบเรียนรู้การ "ขาย": ตั้ง TP 3% SL 1.5%
+        res = analyze_market(hunting_symbol)
         if res:
             curr_p_thb = res['Price'] * live_rate
             pnl = ((curr_p_thb - entry_price_thb) / entry_price_thb) * 100
             
-            if pnl >= TP_PCT or pnl <= -SL_PCT:
+            if pnl >= 3.0 or pnl <= -1.5:
                 new_bal = current_bal * (1 + (pnl/100))
+                # วันที่,เหรียญ,สถานะ,ราคาซื้อ,เงินลงทุน,ราคาขาย,กำไร%,Score,Balance,จำนวน,Headline,Bot_Status,News_Sentiment,News_Headline
                 sheet.append_row([
-                    now_th.strftime("%d/%m/%Y %H:%M:%S"), hunting_symbol, "CLOSED", 
+                    now_th.strftime("%d/%m/%Y %H:%M:%S"), hunting_symbol, "SETTLED", 
                     entry_price_thb, current_bal, curr_p_thb, f"{pnl:.2f}%", 0, 
-                    new_bal, 0, "AUTO EXIT", "ON", "Neutral", f"Exit at {pnl:.2f}%"
+                    new_bal, 0, "AUTO EXIT", "ON", "Neutral", f"Profit Taken at {pnl:.2f}%"
                 ])
-                st.success(f"💰 ปิดงาน {hunting_symbol}! PNL: {pnl:.2f}% | New Bal: {new_bal:.2f}")
+                st.success(f"✅ ปิดงาน {hunting_symbol} กำไร {pnl:.2f}%")
                 time.sleep(5)
                 st.rerun()
     else:
-        # CHECK TO BUY (เข้าซื้อ)
-        tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD"]
-        results = [simulate_trade_potential(t) for t in tickers]
-        valid_res = [r for r in results if r and r['Score'] >= 90]
+        # ระบบเรียนรู้การ "ซื้อ": สแกนหาเหรียญ Score สูง
+        tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "SUI-USD"]
+        results = []
+        for t in tickers:
+            analysis = analyze_market(t)
+            if analysis: results.append(analysis)
+            time.sleep(0.2)
         
-        if valid_res:
-            best = sorted(valid_res, key=lambda x: x['Score'], reverse=True)[0]
-            price_thb = best['Price'] * live_rate
-            sheet.append_row([
-                now_th.strftime("%d/%m/%Y %H:%M:%S"), best['Symbol'], "HUNTING", 
-                price_thb, current_bal, 0, "0%", best['Score'], 
-                current_bal, 0, "AUTO ENTRY", "ON", "Neutral", "AI Signal Detected"
-            ])
-            st.info(f"🚀 AI สั่งลุย! ซื้อ {best['Symbol']} ที่ราคา {price_thb:,.2f} ฿")
-            time.sleep(5)
-            st.rerun()
+        if results:
+            df_signals = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+            best = df_signals.iloc[0]
+            
+            if best['Score'] >= 90:
+                p_thb = best['Price'] * live_rate
+                sheet.append_row([
+                    now_th.strftime("%d/%m/%Y %H:%M:%S"), best['Symbol'], "HUNTING", 
+                    p_thb, current_bal, 0, "0%", best['Score'], 
+                    current_bal, 0, "AUTO ENTRY", "ON", "Neutral", f"RSI: {best['RSI']:.2f}"
+                ])
+                st.info(f"🚀 เริ่มล่า {best['Symbol']} ที่ราคา {p_thb:,.2f} ฿")
+                time.sleep(5)
+                st.rerun()
 
 st.divider()
-st.write(f"Last Scan: {now_th.strftime('%H:%M:%S')} | Bot is monitoring...")
-time.sleep(60) # Scan ทุก 1 นาทีเพื่อความไว
+st.write(f"ระบบกำลังเฝ้าตลาด... (Last Sync: {now_th.strftime('%H:%M:%S')})")
+time.sleep(60)
 st.rerun()
