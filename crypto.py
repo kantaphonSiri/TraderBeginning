@@ -90,7 +90,6 @@ sim_df = pd.DataFrame()
 tickers = [
     "BTC-USD", "ETH-USD", "SOL-USD",    # ตัวหลักที่ไม่มีวันตาย
     "NEAR-USD", "AVAX-USD", "LINK-USD", # โครงสร้างพื้นฐานที่ Yahoo ดึงง่าย
-    "POL-USD",                          # นี่คือ MATIC เดิม (ต้องใช้ชื่อ POL)
     "ADA-USD", "DOT-USD", "LTC-USD",    # กลุ่มที่สภาพคล่องสูง ข้อมูลมาไว
     "SHIB-USD", "DOGE-USD"              # กลุ่ม Meme ที่ Yahoo ให้ความสำคัญเป็นพิเศษ
 ]
@@ -143,6 +142,7 @@ else:
 st.divider()
 time.sleep(300)
 st.rerun()
+
 
 
 
