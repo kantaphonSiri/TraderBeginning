@@ -147,7 +147,7 @@ with col_left:
                 else: st.info("Waiting for more trade history to plot...")
             except: st.error("Chart Rendering Error")
 
-   st.write("#### 🔍 Market Intelligence Radar")
+    st.write("#### 🔍 Market Intelligence Radar")
     # Quick Market Scan ด้วยความปลอดภัยที่มากขึ้น
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD"]
     radar_df = []
@@ -221,4 +221,5 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
 
