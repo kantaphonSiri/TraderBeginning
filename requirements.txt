@@ -11,4 +11,5 @@ textblob
 plotly
 google-auth
 feedparser
+ccxt
 
