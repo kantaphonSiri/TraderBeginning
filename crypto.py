@@ -67,8 +67,7 @@ current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
 df_all = pd.DataFrame()
-win_rate = 0.0
-avg_win, avg_loss = 0.0, 0.0
+win_rate, avg_win, avg_loss = 0.0, 0.0, 0.0
 
 if sheet:
     try:
@@ -84,13 +83,13 @@ if sheet:
             if status == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
                 entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-            
+                next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
+
             closed_trades = df_all[df_all['สถานะ'] == 'CLOSED'].copy()
             if not closed_trades.empty:
                 closed_trades['pnl_num'] = closed_trades['กำไร%'].replace('%','', regex=True).astype(float)
                 wins = closed_trades[closed_trades['pnl_num'] > 0]
                 losses = closed_trades[closed_trades['pnl_num'] < 0]
-                
                 win_rate = (len(wins) / len(closed_trades)) * 100
                 avg_win = wins['pnl_num'].mean() if not wins.empty else 0
                 avg_loss = losses['pnl_num'].mean() if not losses.empty else 0
@@ -105,7 +104,7 @@ if sheet:
                         sheet.append_row([now_th.strftime("%Y-%m-%d %H:%M"), hunting_symbol, "CLOSED", entry_p_thb, next_invest, cur_p, f"{pnl:.2f}%", 0, new_bal, 0, "AUTO_EXIT", "DONE", "N/A", "System Close"])
                         st.rerun()
     except Exception as e:
-        st.error(f"Data Error: {e}")
+        st.error(f"Data processing error: {e}")
 
 # --- 4. DASHBOARD UI ---
 st.title("🦔 Pepper Hunter")
@@ -141,28 +140,24 @@ with col_left:
                 if len(df_chart) >= 2:
                     st.line_chart(df_chart['Balance'], height=250, color="#38bdf8")
                 else: st.info("Waiting for more trade history to plot...")
-            except: st.error("Chart Rendering Error")
+            except: pass
 
     st.write("#### 🔍 Market Intelligence Radar")
-    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
+    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD"]
     radar_df = []
-    
     for t in tickers:
         try:
-            ticker_data = yf.download(t, period="1d", interval="1m", progress=False)
-            if not ticker_data.empty:
-                p_raw = ticker_data['Close'].iloc[-1]
-                if pd.notnull(p_raw):
-                    p = float(p_raw) * live_rate
-                    radar_df.append({"Symbol": t, "Price (฿)": f"{p:,.2f}"})
+            px_data = yf.download(t, period="1d", interval="1m", progress=False)
+            if not px_data.empty:
+                val = float(px_data['Close'].iloc[-1]) * live_rate
+                radar_df.append({"Symbol": t, "Price (฿)": f"{val:,.2f}"})
         except: continue
-            
     if radar_df:
         st.table(pd.DataFrame(radar_df))
 
 with col_right:
-    st.subheader("🤖 AI Strategist")
-    target_date = datetime(2026, 3, 31).date() 
+    st.subheader("🤖 Pepper Strategist")
+    target_date = datetime(2026, 3, 31).date()
     days_left = max((target_date - now_th.date()).days, 1)
     target_amount = 10000.0
     daily_rate_needed = ((target_amount / current_total_bal) ** (1/days_left)) - 1
@@ -176,27 +171,15 @@ with col_right:
     </div>
     """, unsafe_allow_html=True)
     
-    st.divider()
-    
     if win_rate > 0:
-        kelly_perc = calculate_kelly_size(win_rate, avg_win, avg_loss)
-        ai_invest = current_total_bal * kelly_perc
-        st.write("#### 🧠 Risk Management")
-        st.write(f" Win Rate จริง: **{win_rate:.1f}%**")
-        st.info(f"AI แนะนำลงทุนไม้ถัดไป: **{ai_invest:,.2f} ฿**")
-        if not df_all.empty:
-            closed_trades = df_all[df_all['สถานะ'] == 'CLOSED']
-            if not closed_trades.empty:
-                best_asset = closed_trades.groupby('เหรียญ').size().idxmax()
-                st.success(f"💡 AI Hint: คุณเทรด {best_asset} บ่อยที่สุด")
-    else:
-        st.warning("กำลังสะสมข้อมูลเพื่อเริ่มวิเคราะห์แผน...")
+        kelly = calculate_kelly_size(win_rate, avg_win, avg_loss)
+        st.info(f"🧠 AI Recommendation\n\nลงเงินไม้ถัดไป: **{(current_total_bal * kelly):,.2f} ฿**")
 
 # --- FOOTER ---
 st.divider()
 if st.button("🔄 Force Manual Sync"):
     st.rerun()
 
-st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
+st.progress(0, text=f"Update Cycle Active | {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
