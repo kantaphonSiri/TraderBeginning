@@ -7,7 +7,7 @@ import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETTINGS & PROFESSIONAL DARK UI ---
+# --- 1. SETTINGS ---
 st.set_page_config(page_title="Pepper Hunter", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
@@ -112,12 +112,9 @@ if sheet:
 st.title("🦔 Pepper Hunter")
 
 c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
-with c2:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
-with c3:
-    st.metric("Live USD/THB", f"฿{live_rate:.2f}")
+with c1: st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
+with c2: st.metric("Win Rate", f"{win_rate:.1f}%")
+with c3: st.metric("Live USD/THB", f"฿{live_rate:.2f}")
 with c4:
     status_html = f'<span class="status-hunting">HUNTING {hunting_symbol}</span>' if hunting_symbol else '<span class="status-scanning">SCANNING</span>'
     st.markdown(f'<div class="trade-card"><small>SYSTEM STATUS</small><br>{status_html}</div>', unsafe_allow_html=True)
@@ -149,6 +146,7 @@ with col_left:
             except:
                 pass
 
+    # บรรทัดที่ 150 อยู่ตรงนี้ครับ ถูกจัดระดับใหม่แล้ว
     st.write("#### 🔍 Market Intelligence Radar")
     tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "AVAX-USD"]
     radar_df = []
