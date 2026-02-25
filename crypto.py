@@ -149,7 +149,7 @@ with col_left:
 
     st.write("#### 🔍 Market Intelligence Radar")
     # Quick Market Scan ด้วยความปลอดภัยที่มากขึ้น
-    tickers = ["BTC-USD", "ETH-USD", "SOL-USD"]
+    tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "AVAX-USD", "LINK-USD", "AR-USD", "DOT-USD"]
     radar_df = []
     
     for t in tickers:
@@ -221,5 +221,6 @@ if st.button("🔄 Force Manual Sync"):
 st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
+
 
 
