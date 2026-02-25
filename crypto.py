@@ -22,6 +22,12 @@ st.markdown("""
     }
     .status-hunting { color: #ff4b4b; font-weight: bold; }
     .status-scanning { color: #00ff88; font-weight: bold; }
+    .ai-box {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #38bdf8;
+    }
     [data-testid="stMetricValue"] { font-size: 24px !important; color: #00ff88 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -43,6 +49,15 @@ def init_gsheet():
         return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
     except: return None
 
+def calculate_kelly_size(win_rate_pct, avg_win_pct, avg_loss_pct):
+    p = win_rate_pct / 100
+    q = 1 - p
+    if avg_loss_pct == 0: return 0.1
+    b = abs(avg_win_pct / avg_loss_pct)
+    if b == 0: return 0.01
+    kelly_f = (b * p - q) / b
+    return max(0.01, min(kelly_f / 2, 0.25)) # Conservative Half-Kelly
+
 # --- 3. DATA PROCESSING ---
 sheet = init_gsheet()
 live_rate = get_live_thb()
@@ -52,8 +67,9 @@ now_th = datetime.now(timezone(timedelta(hours=7)))
 current_total_bal = 1000.0
 hunting_symbol, entry_p_thb = None, 0.0
 next_invest = 1000.0
-recent_trades = pd.DataFrame()
+df_all = pd.DataFrame()
 win_rate = 0.0
+avg_win, avg_loss = 0.0, 0.0
 
 if sheet:
     try:
@@ -62,25 +78,26 @@ if sheet:
             df_all = pd.DataFrame(recs)
             df_all.columns = df_all.columns.str.strip()
             
-            # ดึงไม้ปัจจุบัน
             last_row = df_all.iloc[-1]
             current_total_bal = float(last_row.get('Balance', 1000))
             status = last_row.get('สถานะ')
-            # ถ้าสถานะเป็น HUNTING จริงๆ ถึงจะเก็บชื่อเหรียญมาใช้
+            
             if status == 'HUNTING':
                 hunting_symbol = last_row.get('เหรียญ')
-            else:
-                hunting_symbol = None  # ล้างค่าทิ้งเพื่อให้หน้าเว็บกลับไปโหมด SCANNING
-            entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-            next_invest = float(last_row.get('เงินลงทุน(฿)', 1000))
-
-            # คำนวณ Win Rate จากประวัติทั้งหมด
-            closed_trades = df_all[df_all['สถานะ'] == 'CLOSED']
+                entry_p_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
+            
+            # AI & Stats Calculation
+            closed_trades = df_all[df_all['สถานะ'] == 'CLOSED'].copy()
             if not closed_trades.empty:
-                wins = closed_trades['กำไร%'].apply(lambda x: 1 if '-' not in str(x) and str(x) != '0%' else 0).sum()
-                win_rate = (wins / len(closed_trades)) * 100
-                recent_trades = closed_trades.tail(5)[['วันที่', 'เหรียญ', 'กำไร%', 'Balance']]
-
+                # Clean Profit/Loss column
+                closed_trades['pnl_num'] = closed_trades['กำไร%'].replace('%','', regex=True).astype(float)
+                wins = closed_trades[closed_trades['pnl_num'] > 0]
+                losses = closed_trades[closed_trades['pnl_num'] < 0]
+                
+                win_rate = (len(wins) / len(closed_trades)) * 100
+                avg_win = wins['pnl_num'].mean() if not wins.empty else 0
+                avg_loss = losses['pnl_num'].mean() if not losses.empty else 0
+                
             # Auto-Exit Logic
             if status == 'HUNTING' and hunting_symbol:
                 ticker = yf.download(hunting_symbol, period="1d", interval="1m", progress=False)
@@ -97,78 +114,91 @@ if sheet:
 # --- 4. DASHBOARD UI ---
 st.title("🦔 Pepper Hunter")
 
-# Top Metrics
 c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
-with c2:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
-with c3:
-    st.metric("Live USD/THB", f"฿{live_rate:.2f}")
+with c1: st.metric("Total Balance", f"{current_total_bal:,.2f} ฿")
+with c2: st.metric("Win Rate", f"{win_rate:.1f}%")
+with c3: st.metric("Live USD/THB", f"฿{live_rate:.2f}")
 with c4:
     status_html = f'<span class="status-hunting">HUNTING {hunting_symbol}</span>' if hunting_symbol else '<span class="status-scanning">SCANNING</span>'
     st.markdown(f'<div class="trade-card"><small>SYSTEM STATUS</small><br>{status_html}</div>', unsafe_allow_html=True)
 
-# --- Main Section ---
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
     if hunting_symbol:
         st.subheader(f"🚀 Active Mission: {hunting_symbol}")
-        # ดึงข้อมูลกราฟเหรียญปัจจุบัน
         hist = yf.download(hunting_symbol, period="1d", interval="15m", progress=False)
-        hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
-        
-        # คำนวณมูลค่าปัจจุบันเทียบกับเงินบาท
-        cur_p_thb = float(hist['Close'].values[-1]) * live_rate
-        units = next_invest / entry_p_thb
-        asset_value_series = hist['Close'] * live_rate * units
-        
-        st.area_chart(asset_value_series, height=250, color="#00ff88" if cur_p_thb >= entry_p_thb else "#ff4b4b")
-        st.caption(f"📈 Real-time Value (฿) | Units: {units:.6f}")
+        if not hist.empty:
+            hist.columns = [col[0] if isinstance(col, tuple) else col for col in hist.columns]
+            cur_p_thb = float(hist['Close'].values[-1]) * live_rate
+            units = next_invest / (entry_p_thb if entry_p_thb > 0 else 1)
+            asset_value_series = hist['Close'] * live_rate * units
+            st.area_chart(asset_value_series, height=250, color="#00ff88" if cur_p_thb >= entry_p_thb else "#ff4b4b")
     else:
-        st.subheader("📈 Portfolio Performance (Equity Curve)")
+        st.subheader("📈 Portfolio Equity Curve")
         if not df_all.empty:
             try:
-                # 1. คลีนข้อมูล: สร้าง DataFrame ใหม่สำหรับการวาดกราฟ
-                # ใช้ .copy() เพื่อไม่ให้กระทบกับตารางหลัก
                 df_chart = df_all[['วันที่', 'Balance']].copy()
-                
-                # 2. แปลง Balance ให้เป็นตัวเลข (ลบช่องว่าง หรือค่าที่แปลงไม่ได้ให้เป็น NaN)
                 df_chart['Balance'] = pd.to_numeric(df_chart['Balance'], errors='coerce')
-                
-                # 3. แปลงวันที่ (ใช้ dayfirst=True เพราะเจ้านายมีรูปแบบ 20/02/2026)
                 df_chart['วันที่'] = pd.to_datetime(df_chart['วันที่'], errors='coerce', dayfirst=True)
-                
-                # 4. ลบแถวที่ข้อมูลไม่สมบูรณ์ออก
-                df_chart = df_chart.dropna(subset=['วันที่', 'Balance'])
-                
-                # 5. เรียงลำดับวันที่ (จากเก่าไปใหม่)
-                df_chart = df_chart.sort_values('วันที่')
-                
+                df_chart = df_chart.dropna().sort_values('วันที่').set_index('วันที่')
                 if len(df_chart) >= 2:
-                    # ตั้งค่า Index เป็นวันที่เพื่อให้กราฟแสดงแกน X เป็นเวลา
-                    df_chart = df_chart.set_index('วันที่')
-                    st.line_chart(df_chart['Balance'], height=250, color="#00ff88")
-                    st.caption(f"💰 พอร์ตปัจจุบัน: {current_total_bal:,.2f} ฿ (อัปเดตล่าสุด: {now_th.strftime('%H:%M')})")
-                else:
-                    st.info("📉 ระบบต้องการข้อมูลอย่างน้อย 2 แถวที่มี Balance เพื่อลากเส้นกราฟครับ (ตอนนี้ข้อมูลยังไม่พร้อม)")
-            
-            except Exception as e:
-                st.error(f"⚠️ ไม่สามารถสร้างกราฟได้: {e}")
-        
-        st.write("#### 🔍 Market Intelligence Radar")
-        st.caption("Scanning for next opportunity...")
+                    st.line_chart(df_chart['Balance'], height=250, color="#38bdf8")
+                else: st.info("Waiting for more trade history to plot...")
+            except: st.error("Chart Rendering Error")
 
-# Control & Footer
+    st.write("#### 🔍 Market Intelligence Radar")
+    # Quick Market Scan
+    tickers = ["BTC-USD", "ETH-USD", "SOL-USD"]
+    radar_df = []
+    for t in tickers:
+        p = yf.download(t, period="1d", interval="1m", progress=False)['Close'].iloc[-1] * live_rate
+        radar_df.append({"Symbol": t, "Price (฿)": f"{p:,.2f}"})
+    st.table(pd.DataFrame(radar_df))
+
+with col_right:
+    st.subheader("🤖 AI Strategist")
+    
+    # Target Forecasting
+    target_date = datetime(2026, 3, 31).date() 
+    days_left = (target_date - now_th.date()).days
+    target_amount = 10000.0
+    
+    daily_rate_needed = ((target_amount / current_total_bal) ** (1/max(days_left, 1))) - 1
+    
+    st.markdown(f"""
+    <div class="ai-box">
+        <small style="color: #38bdf8;">TARGET ANALYTICS</small><br>
+        <b>เป้าหมาย:</b> {target_amount:,.0f} ฿<br>
+        <b>เหลือเวลา:</b> {days_left} วัน<br>
+        <b>Growth Needed:</b> <span style="color:#00ff88;">{daily_rate_needed*100:.2f}% / วัน</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+    
+    # Kelly Management
+    if win_rate > 0:
+        kelly_perc = calculate_kelly_size(win_rate, avg_win, avg_loss)
+        ai_invest = current_total_bal * kelly_perc
+        
+        st.write("#### 🧠 Risk Management")
+        st.write(f" Win Rate จริง: **{win_rate:.1f}%**")
+        st.info(f"AI แนะนำลงทุนไม้ถัดไป: **{ai_invest:,.2f} ฿**")
+        st.caption(f"Calculated by Kelly Criterion (Half-Kelly)")
+        
+        # Pattern Recognition (Simple)
+        if not closed_trades.empty:
+            best_asset = closed_trades.groupby('เหรียญ').size().idxmax()
+            st.success(f"💡 AI Hint: คุณเทรด {best_asset} บ่อยที่สุด โฟกัสความถนัดเดิมเพื่อกำไรที่เสถียร")
+    else:
+        st.warning("กำลังสะสมข้อมูลเพื่อเริ่มวิเคราะห์แผน...")
+
+# --- FOOTER ---
 st.divider()
 if st.button("🔄 Force Manual Sync"):
     st.rerun()
 
-st.progress(0, text=f"Next Update in 5 mins... Last Sync: {now_th.strftime('%H:%M:%S')}")
+st.progress(0, text=f"Update Cycle Active | Last Sync: {now_th.strftime('%H:%M:%S')}")
 time.sleep(300)
 st.rerun()
-
-
-
-
