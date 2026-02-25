@@ -88,10 +88,10 @@ st.write(f"**Bot Status:** {bot_status} | **Current Balance:** {current_bal:,.2f
 sim_df = pd.DataFrame()
 # คัดเลือกตามกลุ่ม: Blue Chip, AI Agent, DePIN และ RWA
 tickers = [
-    "BTC-USD", "ETH-USD", "SOL-USD",   # กลุ่มเสาหลัก (High Liquidity)
-    "RENDER-USD", "FET-USD", "TAO-USD", # กลุ่ม AI & Compute (Trend 2026)
-    "NEAR-USD", "AVAX-USD", "SUI-USD",  # กลุ่ม Layer 1 ดาวรุ่ง
-    "LINK-USD", "ONDO-USD", "AR-USD"    # กลุ่ม Oracle, RWA และ Storage
+    "BTC-USD", "ETH-USD", "SOL-USD",    # เสาหลัก
+    "RENDER-USD", "FET-USD", "NEAR-USD", # AI & Infrastructure (ดึงได้ปกติ)
+    "AVAX-USD", "LINK-USD", "DOT-USD",   # Layer 1 & Oracle
+    "ADA-USD", "MATIC-USD", "STX-USD"    # ตัวเสริมที่มีสภาพคล่องสูง
 ]
 
 with st.spinner('AI Brain is scanning 2026 Gems...'):
@@ -142,4 +142,5 @@ else:
 st.divider()
 time.sleep(300)
 st.rerun()
+
 
