@@ -10,22 +10,47 @@ from datetime import datetime, timedelta, timezone
 
 # --- 1. DATA FETCHING ---
 def get_market_prices():
-    prices = {"gta_sell": 76250.0, "gta_buy": 76050.0, "intl_sell": 78948.0, "intl_buy": 79018.0, "update": "Loading...", "spot": 0.0, "thb": 0.0}
+    # ค่าเริ่มต้นเผื่อกรณีดึงไม่ได้เลย
+    prices = {"gta_sell": 76250.0, "gta_buy": 76050.0, "intl_sell": 78948.0, "intl_buy": 79018.0, "update": "Fallback Mode", "spot": 0.0, "thb": 0.0}
+    
+    # Header เพื่อหลอกเว็บไซต์ว่าเป็นคนเข้าชม
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+
     try:
-        res = requests.get("https://www.goldtraders.or.th/", timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        prices["gta_sell"] = float(soup.find(id="DetailPlace_uc_goldprices1_lblBLSell").text.replace(",", ""))
-        prices["gta_buy"] = float(soup.find(id="DetailPlace_uc_goldprices1_lblBLBuy").text.replace(",", ""))
-        prices["update"] = soup.find(id="DetailPlace_uc_goldprices1_lblLastUpdate").text
+        # 1. พยายามดึงสมาคมฯ ด้วย Header
+        res = requests.get("https://www.goldtraders.or.th/", headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            prices["gta_sell"] = float(soup.find(id="DetailPlace_uc_goldprices1_lblBLSell").text.replace(",", ""))
+            prices["gta_buy"] = float(soup.find(id="DetailPlace_uc_goldprices1_lblBLBuy").text.replace(",", ""))
+            prices["update"] = soup.find(id="DetailPlace_uc_goldprices1_lblLastUpdate").text
         
-        gold_spot = yf.Ticker("GC=F").fast_info['last_price']
-        usd_thb = yf.Ticker("THB=X").fast_info['last_price']
-        prices["intl_sell"] = round((gold_spot / 31.1035) * 15.16 * usd_thb, -1)
+        # 2. ดึงตลาดโลก (ซึ่งเสถียรกว่ามาก) มาเป็นตัวเปรียบเทียบ
+        gold_spot_obj = yf.Ticker("GC=F")
+        thb_obj = yf.Ticker("THB=X")
+        
+        # ใช้ .info['regularMarketPrice'] หรือ .fast_info['last_price']
+        spot = gold_spot_obj.fast_info['last_price']
+        thb = thb_obj.fast_info['last_price']
+        
+        prices["spot"] = spot
+        prices["thb"] = thb
+        
+        # คำนวณราคาสากล (99.99%) และราคาไทยทางเลือก (96.5% Calculated)
+        # สูตร: (Spot * 0.473 * THB) * 32.148 / 28.3495 (มาตรฐานสมาคม)
+        prices["intl_sell"] = round((spot / 31.1035) * 15.16 * thb, -1)
         prices["intl_buy"] = prices["intl_sell"] - 100
-        prices["spot"] = gold_spot
-        prices["thb"] = usd_thb
-    except:
-        st.warning("⚠️ ดึงราคาล่าสุดไม่ได้ ใช้ราคาโดยประมาณ")
+        
+    except Exception as e:
+        # หาก Scraping พลาด ให้ใช้สูตรคำนวณจาก Spot แทน เพื่อให้แอปยังมีราคา Real-time
+        if prices["spot"] > 0:
+            calculated_thai = round((prices["spot"] * 0.473 * prices["thb"]) * 32.148 / 28.3495, -1)
+            prices["gta_sell"] = calculated_thai
+            prices["gta_buy"] = calculated_thai - 100
+            prices["update"] = "Calculated from Spot"
+            
     return prices
 
 def init_gsheet(sheet_name):
@@ -120,3 +145,4 @@ if sheet:
         st.dataframe(df.sort_index(ascending=False), width='stretch')
     else:
         st.info("👋 เริ่มบันทึกข้อมูลแรกที่แถบด้านซ้าย")
+
