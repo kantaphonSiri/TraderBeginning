@@ -21,7 +21,7 @@ def init_gsheet():
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = Credentials.from_service_account_info(creds_dict, 
                 scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-        return gspread.authorize(creds).open("Blue-chip Bet").worksheet("trade_learning")
+        return gspread.authorize(creds).open("gold-bet").worksheet("data_storage")
     except: return None
 
 @st.cache_data(ttl=1800)
@@ -165,3 +165,4 @@ if bot_status == "ON":
 st.write(f"🕒 Last Update: {now_th.strftime('%H:%M:%S')} | Bot Status: {bot_status}")
 time.sleep(60)
 st.rerun()
+
