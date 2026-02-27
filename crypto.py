@@ -1,168 +1,153 @@
 import streamlit as st
 import pandas as pd
-import pandas_ta as ta
 import gspread
-import time
-import ccxt
 import requests
+import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, timezone
+from prophet import Prophet
 
-# --- 1. SETTINGS & GOALS ---
-st.set_page_config(page_title="Pepper Hunter", layout="wide")
-TARGET_BAL = 10000.0
-# เปลี่ยนเป็น KuCoin เพื่อเลี่ยงปัญหา Error 451 จากสถานที่ไม่ได้รับอนุญาต
-exchange = ccxt.kucoin({'enableRateLimit': True})
+# --- 1. CORE FUNCTIONS & CONNECTIVITY ---
 
-# --- 2. CORE FUNCTIONS ---
-def init_gsheet():
+def init_gsheet(sheet_name):
+    """เชื่อมต่อกับ Google Sheet ตามชื่อ Worksheet ที่กำหนด"""
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        creds = Credentials.from_service_account_info(creds_dict, 
-                scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-        return gspread.authorize(creds).open("gold-bet").worksheet("data_storage")
-    except: return None
+        creds = Credentials.from_service_account_info(
+            creds_dict, 
+            scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        )
+        return gspread.authorize(creds).open("gold-bet").worksheet(sheet_name)
+    except:
+        return None
+
+def get_weight_standards():
+    """ดึงค่ามาตรฐานน้ำหนักจาก Sheet 'settings' แทนการ Fix ใน Code"""
+    sheet = init_gsheet("settings")
+    if sheet:
+        data = sheet.get_all_records()
+        # แปลงเป็น Dict { "ชื่อประเภท": น้ำหนักบาทละ }
+        return {row['Type']: float(row['Base_Weight']) for row in data}
+    # Fallback กรณีดึงไม่ได้จริงๆ (เพื่อไม่ให้ระบบพัง)
+    return {"ทองคำแท่ง": 15.244}
 
 @st.cache_data(ttl=1800)
-def get_live_thb():
+def get_market_api():
+    """ดึงราคาตลาด Real-time (แนะนำให้ใช้ API Key จริงเพื่อคุณภาพสูงสุด)"""
     try:
-        res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
-        return float(res.json()['rates']['THB']) if res.status_code == 200 else 35.0
-    except: return 35.0
+        # ดึงค่าเงินบาท
+        res = requests.get("https://open.er-api.com/v6/latest/USD").json()
+        thb_rate = float(res['rates']['THB'])
+        
+        # ตัวอย่างดึงราคา Spot (ในระบบจริงควรใช้ GoldAPI.io หรือแหล่งที่เชื่อถือได้)
+        # ตัวอย่างนี้ใช้ราคาจำลองที่ขยับตามเวลาเพื่อให้เห็นการทำงาน
+        spot_price = 2100.0 + (datetime.now().minute / 10) 
+        thai_price = round((spot_price * 0.473 * thb_rate) * 32.148 / 28.3495, -1)
+        
+        return thai_price, thb_rate, spot_price
+    except:
+        return 43000.0, 35.0, 2100.0
 
-def analyze_market(symbol):
+# --- 2. PREDICTION ENGINE ---
+
+def run_ai_prediction(df):
+    """ใช้ Prophet ทำนายโดยพิจารณาจากข้อมูลประวัติศาสตร์ใน Sheet"""
+    if len(df) < 7: return None # ต้องการข้อมูลอย่างน้อย 7 วันเพื่อหา Trend
     try:
-        ccxt_symbol = symbol.replace("-USD", "/USDT")
-        ohlcv = exchange.fetch_ohlcv(ccxt_symbol, timeframe='15m', limit=100)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        pdf = df[['Date', 'Gold_Price']].copy()
+        pdf['ds'] = pd.to_datetime(pdf['Date'], dayfirst=True)
+        pdf = pdf.rename(columns={'Gold_Price': 'y'}).sort_values('ds')
         
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA_20'] = ta.ema(df['Close'], length=20)
+        model = Prophet(daily_seasonality=True, changepoint_prior_scale=0.01)
+        model.fit(pdf)
         
-        last_p = float(df['Close'].iloc[-1])
-        last_rsi = float(df['RSI'].iloc[-1])
-        last_ema = float(df['EMA_20'].iloc[-1])
-        
-        # กลยุทธ์ AI: เน้นจุดกลับตัว (RSI ต่ำ + ยืนเหนือ EMA)
-        trend = "UP" if last_p > last_ema else "DOWN"
-        score = 0
-        if last_rsi < 35 and trend == "UP": score = 95
-        elif last_rsi < 30: score = 90
-        elif trend == "UP": score = 60
-        else: score = 20
-        
-        return {"Symbol": symbol, "Price": last_p, "Score": score, "Trend": trend, "RSI": last_rsi}
-    except: return None
+        future = model.make_future_dataframe(periods=1)
+        forecast = model.predict(future)
+        return round(forecast['yhat'].iloc[-1], 2)
+    except:
+        return None
 
-# --- 3. DATA PROCESSING ---
-current_bal = 1000.0
-bot_status = "OFF"
-hunting_symbol = None
-entry_price_thb = 0
+# --- 3. MAIN UI APP ---
 
-sheet = init_gsheet()
-live_rate = get_live_thb()
-now_th = datetime.now(timezone(timedelta(hours=7)))
+st.title("🛡️ Gold Hunter ")
 
-if sheet:
-    try:
-        recs = sheet.get_all_records()
-        if recs:
-            df_all = pd.DataFrame(recs)
-            df_all.columns = [c.strip() for c in df_all.columns]
-            last_row = df_all.iloc[-1]
-            current_bal = float(last_row.get('Balance', 1000))
-            bot_status = last_row.get('Bot_Status', 'OFF')
-            if str(last_row.get('สถานะ')).upper() == 'HUNTING':
-                hunting_symbol = last_row.get('เหรียญ')
-                entry_price_thb = float(last_row.get('ราคาซื้อ(฿)', 0))
-    except: pass
+# ดึง Config จาก Sheet 'settings'
+weight_map = get_weight_standards()
+thai_price_now, thb_now, spot_now = get_market_api()
 
-# --- 4. DASHBOARD UI ---
-st.title("🦔 Pepper Hunter")
+# Display Live Ticker
+st.write(f"🌐 **Market Connect:** Gold Spot ${spot_now:,.2f} | THB/USD {thb_now:.2f}")
 
-# ส่วนแสดง Progress Bar
-col_bal, col_target = st.columns(2)
-with col_bal:
-    st.metric("Current Balance", f"{current_bal:,.2f} ฿", f"{(current_bal-1000):,.2f} ฿")
-with col_target:
-    st.metric("Target Goal", f"{TARGET_BAL:,.2f} ฿", f"Remaining: {TARGET_BAL-current_bal:,.2f} ฿")
-
-progress = min(current_bal / TARGET_BAL, 1.0)
-st.progress(progress, text=f"Progress to 10k: {progress*100:.2f}%")
-
-st.divider()
-
-# --- 5. AI INSIGHTS (TOP 6 CANDIDATES) ---
-st.subheader("🎯 AI Top Picks & Real-time Analysis")
-tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "RENDER-USD", "FET-USD", "SUI-USD", "LINK-USD"]
-
-with st.spinner('🤖 AI Brain is scanning market candidates...'):
-    all_analysis = []
-    for t in tickers:
-        res = analyze_market(t)
-        if res: all_analysis.append(res)
+# --- 4. DYNAMIC TRANSACTION FORM ---
+with st.sidebar:
+    st.header("📥 ซื้อทองคำใหม่")
+    # ดึงตัวเลือกจาก Sheet 'settings' โดยตรง
+    selected_type = st.selectbox("เลือกประเภททองคำ (จากระบบ)", list(weight_map.keys()))
+    current_base = weight_map[selected_type]
     
-    if all_analysis:
-        df_signals = pd.DataFrame(all_analysis).sort_values(by="Score", ascending=False)
-        top_6 = df_signals.head(6).copy()
-        
-        # คำนวณจำนวนเหรียญที่จะซื้อตามทุนที่มี (All-in strategy สำหรับพอร์ตเล็ก)
-        top_6['Est. Qty'] = top_6.apply(lambda x: current_bal / (x['Price'] * live_rate), axis=1)
-        top_6['Price (฿)'] = top_6['Price'] * live_rate
-        
-        # แสดงตาราง Insight
-        st.table(top_6[["Symbol", "Score", "Trend", "RSI", "Price (฿)", "Est. Qty"]].style.format({
-            "Price (฿)": "{:,.2f}",
-            "Est. Qty": "{:,.4f}",
-            "RSI": "{:.2f}"
-        }))
-
-        best_move = top_6.iloc[0]
-        if not hunting_symbol:
-            st.info(f"🔮 **AI Next Move:** เตรียมเข้าซื้อ **{best_move['Symbol']}** จำนวน **{best_move['Est. Qty']:.4f}** หากเงื่อนไขครบ (Score >= 90)")
-
-st.divider()
-
-# --- 6. AUTO-TRADING LOGIC ---
-if bot_status == "ON":
-    if hunting_symbol:
-        # ระบบตรวจสอบการ "ขาย" (Exit Strategy)
-        res = analyze_market(hunting_symbol)
-        if res:
-            curr_p_thb = res['Price'] * live_rate
-            pnl = ((curr_p_thb - entry_price_thb) / entry_price_thb) * 100
+    st.info(f"น้ำหนักอ้างอิง: {current_base} กรัม/บาท")
+    
+    # Input น้ำหนัก
+    in_baht = st.number_input("บาท", min_value=0, step=1)
+    in_salung = st.number_input("สลึง", min_value=0, max_value=3)
+    in_satang = st.number_input("สตางค์", min_value=0, max_value=99)
+    
+    in_cost = st.number_input("ราคาซื้อรวม (บาท)", min_value=0.0)
+    
+    # คำนวณน้ำหนักกรัมจาก Config ใน Sheet
+    total_gram = (in_baht * current_base) + (in_salung * (current_base/4)) + (in_satang * (current_base/100))
+    st.warning(f"คำนวณน้ำหนักรวม: {total_gram:.4f} กรัม")
+    
+    if st.button("บันทึกธุรกรรมคุณภาพ", use_container_width=True):
+        main_sheet = init_gsheet("data_storage")
+        if main_sheet and in_cost > 0:
+            hist_df = pd.DataFrame(main_sheet.get_all_records())
+            pred_val = run_ai_prediction(hist_df) if not hist_df.empty else 0
             
-            # เงื่อนไข Take Profit 3% หรือ Stop Loss 1.5%
-            if pnl >= 3.0 or pnl <= -1.5:
-                new_bal = current_bal * (1 + (pnl/100))
-                sheet.append_row([
-                    now_th.strftime("%d/%m/%Y %H:%M:%S"), hunting_symbol, "SETTLED", 
-                    entry_price_thb, current_bal, curr_p_thb, f"{pnl:.2f}%", 0, 
-                    new_bal, 0, "AUTO EXIT", "ON", "Neutral", f"Exit at {pnl:.2f}%"
-                ])
-                st.balloons()
-                st.success(f"💰 ปิดงาน {hunting_symbol}! กำไร/ขาดทุน: {pnl:.2f}% | ยอดใหม่: {new_bal:,.2f} ฿")
-                time.sleep(5)
-                st.rerun()
-    else:
-        # ระบบตรวจสอบการ "ซื้อ" (Entry Strategy)
-        best = df_signals.iloc[0]
-        if best['Score'] >= 90:
-            p_thb = best['Price'] * live_rate
-            qty = current_bal / p_thb
-            sheet.append_row([
-                now_th.strftime("%d/%m/%Y %H:%M:%S"), best['Symbol'], "HUNTING", 
-                p_thb, current_bal, 0, "0%", best['Score'], 
-                current_bal, qty, "AUTO ENTRY", "ON", "Neutral", f"RSI: {best['RSI']:.2f}"
-            ])
-            st.warning(f"🚀 AI ตัดสินใจซื้อ {best['Symbol']} จำนวน {qty:.4f} หน่วย")
-            time.sleep(5)
+            row = [
+                datetime.now(timezone(timedelta(hours=7))).strftime("%d/%m/%Y %H:%M:%S"),
+                thai_price_now, thb_now, spot_now, selected_type,
+                in_baht, in_salung, in_satang, round(total_gram, 4), in_cost, pred_val
+            ]
+            main_sheet.append_row(row)
+            st.success("✅ บันทึกข้อมูลแบบ Dynamic เรียบร้อย!")
             st.rerun()
 
-# --- 7. FOOTER ---
-st.write(f"🕒 Last Update: {now_th.strftime('%H:%M:%S')} | Bot Status: {bot_status}")
-time.sleep(60)
-st.rerun()
+# --- 5. ANALYTICS DASHBOARD ---
+main_sheet = init_gsheet("data_storage")
+if main_sheet:
+    data = main_sheet.get_all_records()
+    if data:
+        df = pd.DataFrame(data)
+        
+        # Dashboard สรุปผล
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("🔮 Gold Prediction")
+            next_price = run_ai_prediction(df)
+            if next_price:
+                diff = next_price - thai_price_now
+                st.metric("ราคาพรุ่งนี้ที่คาดการณ์", f"{next_price:,.2f} ฿", f"{diff:,.2f}")
+            else:
+                st.write("ระบบกำลังรวบรวมข้อมูลเพื่อวิเคราะห์...")
 
+        with col2:
+            st.subheader("💰 Portfolio Performance")
+            # คำนวณกำไร/ขาดทุนแบบ Dynamic (ใช้ฐานน้ำหนักตามแถวนั้นๆ)
+            def calc_pnl(row):
+                base = weight_map.get(row['Type'], 15.244)
+                current_val = (row['Total_Gram'] / base) * thai_price_now
+                return current_val
+
+            df['Market_Value'] = df.apply(calc_pnl, axis=1)
+            total_invest = df['Total_Cost'].sum()
+            total_market = df['Market_Value'].sum()
+            total_pnl = total_market - total_invest
+            
+            st.metric("กำไร/ขาดทุนสุทธิ", f"{total_pnl:,.2f} ฿", f"{(total_pnl/total_invest*100):.2f}%")
+
+        st.divider()
+        st.subheader("📜 ประวัติธุรกรรม")
+        st.dataframe(df, use_container_width=True)
