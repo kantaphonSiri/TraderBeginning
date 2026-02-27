@@ -9,7 +9,7 @@ from prophet import Prophet
 
 # --- 1. CORE FUNCTIONS & CONNECTIVITY ---
 
-def init_gsheet(sheet_name):
+def init_gsheet("data_storage"):
     """เชื่อมต่อกับ Google Sheet ตามชื่อ Worksheet ที่กำหนด"""
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -18,7 +18,7 @@ def init_gsheet(sheet_name):
             creds_dict, 
             scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         )
-        return gspread.authorize(creds).open("gold-bet").worksheet(sheet_name)
+        return gspread.authorize(creds).open("gold-bet").worksheet("data_storage")
     except:
         return None
 
@@ -151,3 +151,4 @@ if main_sheet:
         st.divider()
         st.subheader("📜 ประวัติธุรกรรม")
         st.dataframe(df, use_container_width=True)
+
