@@ -9,7 +9,7 @@ from prophet import Prophet
 
 # --- 1. CORE FUNCTIONS & CONNECTIVITY ---
 
-def init_gsheet("data_storage"):
+def init_gsheet(sheet_name):
     """เชื่อมต่อกับ Google Sheet ตามชื่อ Worksheet ที่กำหนด"""
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
