@@ -63,7 +63,7 @@ df_data = get_ai_data()
 thb_rate = get_exchange_rate()
 current_spot = float(df_data['gold_spot'].iloc[-1])
 
-st.title("🏆 Gold Bet (AI & Portfolio)")
+st.title("🏆 Gold Bet")
 
 with st.sidebar:
     st.header("📥 บันทึกการซื้อ")
@@ -156,3 +156,4 @@ if sheet:
     data = pd.DataFrame(sheet.get_all_records())
     if not data.empty:
         st.dataframe(data.tail(10), use_container_width=True)
+
