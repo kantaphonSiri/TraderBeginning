@@ -9,16 +9,22 @@ from datetime import datetime, timedelta
 # --- 1. CONFIG & SETTINGS ---
 st.set_page_config(page_title="Gold Bet", layout="wide")
 
-# ฟังก์ชันดึงอัตราแลกเปลี่ยนปัจจุบัน
+# ฟังก์ชันดึงข้อมูลแบบปลอดภัย (ดึงเฉพาะตัวเลข)
+def safe_get_value(data):
+    if data is None or (isinstance(data, pd.DataFrame) and data.empty):
+        return 0.0
+    if isinstance(data, (pd.Series, pd.DataFrame)):
+        return float(data.values.flatten()[0])
+    return float(data)
+
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
-        thb_data = yf.download("THB=X", period="1d")
-        return thb_data['Close'].iloc[-1]
+        data = yf.download("THB=X", period="1d", progress=False)['Close']
+        return safe_get_value(data)
     except:
-        return 35.5 # Fallback
+        return 35.5
 
-# --- 2. DATA FETCHING (AI & ECONOMIC) ---
 @st.cache_data(ttl=3600)
 def get_combined_data():
     end_date = datetime.now()
@@ -28,23 +34,14 @@ def get_combined_data():
     df_list = []
     
     for name, sym in tickers.items():
-        # ดึงข้อมูลและพยายามจัดการกรณีข้อมูลว่าง
         data = yf.download(sym, start=start_date, end=end_date, progress=False)
-        
         if not data.empty:
-            # เลือกเฉพาะคอลัมน์ Close
-            close_data = data['Close']
-            
-            # ตรวจสอบว่า close_data เป็น DataFrame หรือ Series (บางครั้ง yfinance คืนค่าต่างกัน)
-            if isinstance(close_data, pd.DataFrame):
-                close_data = close_data.iloc[:, 0] # เอาคอลัมน์แรก
-            
-            df_list.append(pd.DataFrame({name: close_data}))
-        else:
-            st.error(f"ไม่สามารถดึงข้อมูลสำหรับ {name} ({sym}) ได้ในขณะนี้")
-            # สร้างข้อมูลหลอกชั่วคราวเพื่อไม่ให้แอปพัง (Optional)
-            return pd.DataFrame() 
-
+            # ดึงคอลัมน์ Close โดยไม่สนว่าจะเป็น Multi-index หรือไม่
+            close_col = data['Close']
+            if isinstance(close_col, pd.DataFrame):
+                close_col = close_col.iloc[:, 0]
+            df_list.append(pd.DataFrame({name: close_col}))
+    
     if not df_list:
         return pd.DataFrame()
 
@@ -53,88 +50,85 @@ def get_combined_data():
     df['gold_lag1'] = df['gold_spot'].shift(1)
     return df.dropna()
 
-# --- 3. UI: HEADER & CURRENT PRICE ---
+# --- 2. PREPARE DATA ---
 thb_rate = get_exchange_rate()
 df_data = get_combined_data()
-current_spot = df_data['gold_spot'].iloc[-1]
 
-# สูตรแปลง Spot เป็นทองไทย 96.5% (โดยประมาณ)
-# (Spot * 0.473 * THB) * 32.148 / 28.3495 
-current_thai_price = round((current_spot * 0.473 * thb_rate) * 32.148 / 28.3495, -1)
+if df_data.empty:
+    st.error("ไม่สามารถดึงข้อมูลเศรษฐกิจได้ กรุณารีเฟรชหน้าจออีกครั้ง")
+    st.stop()
 
+current_spot = safe_get_value(df_data['gold_spot'].iloc[-1])
+# สูตรแปลงราคาทองไทย 96.5%
+current_thai_price = (current_spot * 0.473 * thb_rate) * 32.148 / 28.3495
+
+# --- 3. UI: DASHBOARD ---
 st.title("Gold Bet")
-st.write(f"วิเคราะห์โดยอิงจาก: **ค่าเงินดอลลาร์ (DXY)** และ **อัตราเงินเฟ้อสหรัฐฯ**")
+st.write("พยากรณ์ราคาทองคำด้วยปัจจัยเศรษฐกิจโลก (ดอลลาร์ & เงินเฟ้อ)")
 
 col_p1, col_p2, col_p3 = st.columns(3)
-col_p1.metric("ราคาทองไทยปัจจุบัน (ประมาณ)", f"{current_thai_price:,.0f} ฿")
-col_p2.metric("Gold Spot", f"${current_spot:,.2f}")
+col_p1.metric("ราคาทองไทยปัจจุบัน", f"{current_thai_price:,.0f} ฿")
+col_p2.metric("Gold Spot (World)", f"${current_spot:,.2f}")
 col_p3.metric("ค่าเงินบาท", f"{thb_rate:.2f} ฿/$")
 
 # --- 4. BACKTESTING (ตรวจสอบความแม่นยำ) ---
 st.divider()
-st.subheader("📊 ส่วนตรวจสอบความแม่นยำของ AI (Backtesting)")
-st.write("ลองให้ AI ทายราคาย้อนหลัง 6 เดือนที่ผ่านมา เพื่อดูว่าทายแม่นแค่ไหน")
+st.subheader("📊 ตรวจสอบความแม่นยำ (Backtesting)")
+st.caption("AI ลองทายราคาย้อนหลัง 6 เดือน เพื่อพิสูจน์ความแม่นยำ")
 
-# เตรียมข้อมูล Backtest
 test_size = 120
 train_df = df_data[:-test_size]
 test_df = df_data[-test_size:].copy()
 
+# ใช้ปัจจัยเศรษฐกิจในการฝึกสอน
+features = ['day_index', 'gold_lag1', 'dxy', 'inflation_etf']
 back_model = RandomForestRegressor(n_estimators=100, random_state=42)
-back_model.fit(train_df[['day_index', 'gold_lag1', 'dxy', 'inflation_etf']], train_df['gold_spot'])
+back_model.fit(train_df[features], train_df['gold_spot'])
 
 # ทำนายและแปลงเป็นเงินบาท
+test_df['pred_spot'] = back_model.predict(test_df[features])
 test_df['actual_thb'] = (test_df['gold_spot'] * 0.473 * thb_rate) * 32.148 / 28.3495
-test_df['pred_thb'] = (back_model.predict(test_df[['day_index', 'gold_lag1', 'dxy', 'inflation_etf']]) * 0.473 * thb_rate) * 32.148 / 28.3495
+test_df['pred_thb'] = (test_df['pred_spot'] * 0.473 * thb_rate) * 32.148 / 28.3495
 
-# คำนวณความแม่นยำ
 mape = np.mean(np.abs((test_df['actual_thb'] - test_df['pred_thb']) / test_df['actual_thb'])) * 100
 accuracy = 100 - mape
 
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=test_df.index, y=test_df['actual_thb'], name="ราคาจริง (บาท)", line=dict(color='#FFD700')))
-fig.add_trace(go.Scatter(x=test_df.index, y=test_df['pred_thb'], name="AI ทำนาย (บาท)", line=dict(color='#00FFFF', dash='dash')))
-fig.update_layout(template="plotly_dark", height=400)
+fig.add_trace(go.Scatter(x=test_df.index, y=test_df['actual_thb'], name="ราคาจริง", line=dict(color='#FFD700', width=2)))
+fig.add_trace(go.Scatter(x=test_df.index, y=test_df['pred_thb'], name="AI ทำนาย", line=dict(color='#00FFFF', dash='dash')))
+fig.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=20, b=20))
 st.plotly_chart(fig, use_container_width=True)
 
-st.success(f"🎯 ความแม่นยำของระบบปัจจุบัน: **{accuracy:.2f}%** (คลาดเคลื่อนประมาณ {mape:.2f}%)")
+st.success(f"🎯 ความแม่นยำในการวิเคราะห์: **{accuracy:.2f}%**")
 
-# --- 5. PREDICTION (พยากรณ์อนาคต) ---
+# --- 5. FUTURE PREDICTION ---
 st.divider()
-st.subheader("🔮 คำนวณโอกาสทำกำไรในอนาคต")
+st.subheader("🔮 พยากรณ์กำไรในอนาคต")
 
-col_in1, col_in2 = st.columns(2)
-with col_in1:
-    user_buy_price = st.number_input("คุณซื้อมาในราคาเท่าไหร่? (บาทละ)", value=int(current_thai_price))
-    hold_years = st.slider("อีกกี่ปีถึงจะขาย?", 1, 10, 3)
+c_in1, c_in2 = st.columns(2)
+with c_in1:
+    user_price = st.number_input("ราคาที่คุณซื้อมา (บาทละ)", value=int(current_thai_price))
+    years = st.slider("ระยะเวลาที่ต้องการถือครอง (ปี)", 1, 10, 3)
 
-# วิเคราะห์อนาคต
+# ฝึกสอนโมเดลด้วยข้อมูลทั้งหมด
 full_model = RandomForestRegressor(n_estimators=100, random_state=42)
-full_model.fit(df_data[['day_index', 'gold_lag1', 'dxy', 'inflation_etf']], df_data['gold_spot'])
+full_model.fit(df_data[features], df_data['gold_spot'])
 
-# สมมติฐานอนาคต (เงินเฟ้อโตขึ้น ดอลลาร์อ่อนลงเล็กน้อย)
-future_idx = df_data['day_index'].iloc[-1] + (hold_years * 252)
+# จำลองอนาคต: ดอลลาร์อ่อนค่า 5%, เงินเฟ้อสะสม 6% (ในระยะ 3 ปี)
+future_idx = df_data['day_index'].iloc[-1] + (years * 252)
 future_X = pd.DataFrame([[future_idx, current_spot, df_data['dxy'].iloc[-1]*0.95, df_data['inflation_etf'].iloc[-1]*1.06]], 
-                        columns=['day_index', 'gold_lag1', 'dxy', 'inflation_etf'])
+                        columns=features)
 
-pred_spot_future = full_model.predict(future_X)[0]
-pred_thb_future = round((pred_spot_future * 0.473 * thb_rate) * 32.148 / 28.3495, -1)
-profit = pred_thb_future - user_buy_price
+pred_future_spot = safe_get_value(full_model.predict(future_X))
+pred_future_thb = (pred_future_spot * 0.473 * thb_rate) * 32.148 / 28.3495
+profit = pred_future_thb - user_price
 
-with col_in2:
-    st.write("### 📜 ผลพยากรณ์")
-    st.write(f"ในอีก **{hold_years} ปี** ข้างหน้า AI คาดว่าราคาทองจะเป็น:")
-    st.title(f"{pred_thb_future:,.0f} ฿")
+with c_in2:
+    st.markdown(f"### ผลวิเคราะห์อีก {years} ปี")
+    st.title(f"{pred_future_thb:,.0f} ฿")
     if profit > 0:
-        st.write(f"กำไรคาดการณ์: :green[{profit:,.0f} บาท] ({ (profit/user_buy_price)*100:.2f}%)")
+        st.subheader(f"📈 กำไร: :green[{profit:,.0f} ฿] ({ (profit/user_price)*100:.2f}%)")
     else:
-        st.write(f"ขาดทุนคาดการณ์: :red[{profit:,.0f} บาท]")
+        st.subheader(f"📉 ขาดทุน: :red[{profit:,.0f} ฿]")
 
-# --- 6. ADVICE ---
-st.divider()
-st.info(f"""
-💡 **คำแนะนำจาก AI:** - ทองคำมักชนะเงินเฟ้อในระยะยาว (3 ปีขึ้นไป) 
-- หากดัชนีดอลลาร์ (DXY) ลดลง จะเป็นแรงส่งให้ราคาทองในพอร์ตคุณพุ่งสูงขึ้น 
-- ความแม่นยำ {accuracy:.2f}% หมายความว่า AI ตัวนี้เข้าใจทิศทางเศรษฐกิจไทยและโลกได้ค่อนข้างดีครับ
-""")
-
+st.info("💡 **กลยุทธ์:** หากค่าความแม่นยำสูงกว่า 90% คุณสามารถใช้ตัวเลขนี้วางแผนการออมทองในระยะยาวได้ดีขึ้นครับ")
