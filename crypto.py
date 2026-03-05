@@ -24,14 +24,30 @@ def get_combined_data():
     end_date = datetime.now()
     start_date = end_date - timedelta(days=5*365)
     
-    # ดัชนี: ทองคำ, ดอลลาร์ (DXY), เงินเฟ้อ (TIP)
     tickers = {"gold_spot": "GC=F", "dxy": "DX-Y.NYB", "inflation_etf": "TIP"}
     df_list = []
     
     for name, sym in tickers.items():
-        d = yf.download(sym, start=start_date, end=end_date)['Close']
-        df_list.append(pd.DataFrame({name: d}))
-    
+        # ดึงข้อมูลและพยายามจัดการกรณีข้อมูลว่าง
+        data = yf.download(sym, start=start_date, end=end_date, progress=False)
+        
+        if not data.empty:
+            # เลือกเฉพาะคอลัมน์ Close
+            close_data = data['Close']
+            
+            # ตรวจสอบว่า close_data เป็น DataFrame หรือ Series (บางครั้ง yfinance คืนค่าต่างกัน)
+            if isinstance(close_data, pd.DataFrame):
+                close_data = close_data.iloc[:, 0] # เอาคอลัมน์แรก
+            
+            df_list.append(pd.DataFrame({name: close_data}))
+        else:
+            st.error(f"ไม่สามารถดึงข้อมูลสำหรับ {name} ({sym}) ได้ในขณะนี้")
+            # สร้างข้อมูลหลอกชั่วคราวเพื่อไม่ให้แอปพัง (Optional)
+            return pd.DataFrame() 
+
+    if not df_list:
+        return pd.DataFrame()
+
     df = pd.concat(df_list, axis=1).dropna()
     df['day_index'] = np.arange(len(df))
     df['gold_lag1'] = df['gold_spot'].shift(1)
@@ -121,3 +137,4 @@ st.info(f"""
 - หากดัชนีดอลลาร์ (DXY) ลดลง จะเป็นแรงส่งให้ราคาทองในพอร์ตคุณพุ่งสูงขึ้น 
 - ความแม่นยำ {accuracy:.2f}% หมายความว่า AI ตัวนี้เข้าใจทิศทางเศรษฐกิจไทยและโลกได้ค่อนข้างดีครับ
 """)
+
