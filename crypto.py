@@ -3,126 +3,100 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import gspread
 from sklearn.ensemble import RandomForestRegressor
-from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
-# --- 1. INITIAL SETUP & SECRETS ---
+# --- 1. SETTINGS & CONVERSION ---
 st.set_page_config(page_title="Gold Bet", layout="wide")
 
-def init_gsheet():
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        creds = Credentials.from_service_account_info(
-            creds_dict, 
-            scopes=["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        )
-        return gspread.authorize(creds).open("gold-bet").worksheet("data_storage")
-    except:
-        return None
+def get_exchange_rate():
+    data = yf.download("THB=X", period="1d", progress=False)['Close']
+    return float(data.values.flatten()[0])
 
-# --- 2. DATA ENGINE (AI LEARNING) ---
+# ฟังก์ชันคำนวณน้ำหนักกรัมจากหน่วยไทย
+def convert_to_gram(purity, baht, salung, satang):
+    base_weight = 15.244 if purity == "96.5%" else 15.16
+    total_baht = baht + (salung * 0.25) + (satang * 0.01)
+    return total_baht * base_weight
+
+# --- 2. AI ENGINE ---
 @st.cache_data(ttl=3600)
 def get_ai_data():
     end_date = datetime.now()
     start_date = end_date - timedelta(days=5*365)
-    
-    # ดึงข้อมูลปัจจัยโลก
-    tickers = {"gold_spot": "GC=F", "dxy": "DX-Y.NYB", "inflation_etf": "TIP", "thb": "THB=X"}
+    tickers = {"gold_spot": "GC=F", "dxy": "DX-Y.NYB", "inflation_etf": "TIP"}
     df_list = []
     for name, sym in tickers.items():
         data = yf.download(sym, start=start_date, end=end_date, progress=False)['Close']
         if isinstance(data, pd.DataFrame): data = data.iloc[:, 0]
         df_list.append(pd.DataFrame({name: data}))
-    
     df = pd.concat(df_list, axis=1).dropna()
-    
-    # --- จุดที่ทำให้ AI แม่นขึ้น (Feature Engineering) ---
     df['day_index'] = np.arange(len(df))
     df['gold_lag1'] = df['gold_spot'].shift(1)
-    df['momentum'] = df['gold_spot'].diff(10) # แรงเหวี่ยง 10 วัน
-    df['ma20'] = df['gold_spot'].rolling(window=20).mean() # แนวโน้ม 20 วัน
+    df['momentum'] = df['gold_spot'].diff(10)
+    df['ma20'] = df['gold_spot'].rolling(window=20).mean()
     return df.dropna()
 
-# --- 3. PROCESSING ---
+# --- 3. UI & INPUT ---
 df_data = get_ai_data()
-thb_rate = float(df_data['thb'].iloc[-1])
+thb_rate = get_exchange_rate()
 current_spot = float(df_data['gold_spot'].iloc[-1])
-# คำนวณราคาทองไทย (96.5%)
-current_thai_price = (current_spot * 0.473 * thb_rate) * 32.148 / 28.3495
 
-# --- 4. DASHBOARD UI ---
-st.title("Gold Bet")
-st.write(f"อัปเดตล่าสุด: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.title("🏆 Gold Bet")
 
-m1, m2, m3 = st.columns(3)
-m1.metric("ทองไทย (ประมาณ)", f"{current_thai_price:,.0f} ฿")
-m2.metric("Gold Spot", f"${current_spot:,.2f}")
-m3.metric("ค่าเงินบาท", f"{thb_rate:.2f} ฿/$")
+# Sidebar สำหรับกรอกข้อมูล
+with st.sidebar:
+    st.header("📥 บันทึกการซื้อ")
+    purity = st.selectbox("ความบริสุทธิ์", ["96.5%", "99.99%"])
+    
+    st.write("ระบุน้ำหนักทอง")
+    c1, c2, c3 = st.columns(3)
+    in_baht = c1.number_input("บาท", min_value=0, step=1)
+    in_salung = c2.number_input("สลึง", min_value=0, max_value=3)
+    in_satang = c3.number_input("สตางค์", min_value=0, max_value=99)
+    
+    total_cost = st.number_input("ราคาที่ซื้อจริง (บาทรวม)", value=0)
+    
+    # คำนวณน้ำหนักกรัมเพื่อเก็บลงระบบ
+    gram_weight = convert_to_gram(purity, in_baht, in_salung, in_satang)
+    st.info(f"น้ำหนักรวม: {gram_weight:.4f} กรัม")
+    
+    if st.button("💾 บันทึกลง Google Sheet"):
+        st.write("ระบบจำลอง: บันทึกสำเร็จ! (กรุณาต่อ Google Sheet ตามโค้ดก่อนหน้า)")
 
-# --- 5. BACKTESTING GRAPH ---
-st.subheader("📊 ตรวจสอบสมอง AI (Backtesting)")
-test_size = 100
-train_df = df_data[:-test_size]
-test_df = df_data[-test_size:].copy()
+# --- 4. PREDICTION LOGIC ---
+st.subheader("🔮 AI Prediction (ทำนายราคาต่อ 1 บาททอง)")
 
+# คำนวณราคาวันนี้ตามความบริสุทธิ์
+if purity == "96.5%":
+    price_per_baht = (current_spot * 0.473 * thb_rate) * 32.148 / 28.3495
+else:
+    price_per_baht = (current_spot / 31.1035) * 15.16 * thb_rate
+
+st.metric(f"ราคาทอง {purity} วันนี้ (ต่อบาท)", f"{price_per_baht:,.0f} ฿")
+
+# AI พยากรณ์
 features = ['day_index', 'gold_lag1', 'dxy', 'inflation_etf', 'momentum', 'ma20']
 model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(train_df[features], train_df['gold_spot'])
+model.fit(df_data[features], df_data['gold_spot'])
 
-test_df['pred_spot'] = model.predict(test_df[features])
-test_df['actual_thb'] = (test_df['gold_spot'] * 0.473 * thb_rate) * 32.148 / 28.3495
-test_df['pred_thb'] = (test_df['pred_spot'] * 0.473 * thb_rate) * 32.148 / 28.3495
+years = st.slider("ระยะเวลาถือครอง (ปี)", 1, 10, 3)
+future_idx = df_data['day_index'].iloc[-1] + (years * 252)
+future_X = pd.DataFrame([[future_idx, current_spot, df_data['dxy'].iloc[-1]*0.98, df_data['inflation_etf'].iloc[-1]*1.05, 0, current_spot]], columns=features)
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=test_df.index, y=test_df['actual_thb'], name="ราคาจริง", line=dict(color='gold')))
-fig.add_trace(go.Scatter(x=test_df.index, y=test_df['pred_thb'], name="AI ทำนาย", line=dict(color='cyan', dash='dash')))
-st.plotly_chart(fig, use_container_width=True)
+pred_spot = model.predict(future_X)[0]
 
-# --- 6. SIDEBAR: RECORD & PREDICT ---
-with st.sidebar:
-    st.header("📥 บันทึกการซื้อ & พยากรณ์")
-    
-    # ส่วนพยากรณ์
-    st.subheader("🔮 AI Predictor")
-    years = st.slider("อีกกี่ปีจะขาย?", 1, 10, 3)
-    future_idx = df_data['day_index'].iloc[-1] + (years * 252)
-    # จำลองอนาคต (เพิ่ม Momentum และ MA เข้าไปในอนาคต)
-    future_X = pd.DataFrame([[
-        future_idx, current_spot, df_data['dxy'].iloc[-1]*0.98, 
-        df_data['inflation_etf'].iloc[-1]*1.05, 0, current_spot
-    ]], columns=features)
-    
-    pred_future = model.predict(future_X)[0]
-    pred_thb_future = (pred_future * 0.473 * thb_rate) * 32.148 / 28.3495
-    st.write(f"คาดการณ์ราคาใน {years} ปี:")
-    st.title(f"{pred_thb_future:,.0f} ฿")
-    
-    st.divider()
-    
-    # ส่วนบันทึก Google Sheet
-    st.subheader("💾 บันทึกพอร์ต")
-    buy_price = st.number_input("ราคาที่ซื้อจริง", value=int(current_thai_price))
-    baht = st.number_input("กี่บาททอง", min_value=1)
-    if st.button("บันทึกลง Google Sheet"):
-        sheet = init_gsheet()
-        if sheet:
-            # เตรียมข้อมูลลง Sheet
-            row = [datetime.now().strftime("%Y-%m-%d"), buy_price, "96.5%", current_spot, "Bar", baht, 0, 0, baht*15.244, buy_price*baht, "AI Predicted"]
-            sheet.append_row(row)
-            st.success("บันทึกเรียบร้อย!")
-        else:
-            st.error("เชื่อมต่อ Google Sheet ไม่ได้")
+# แปลงราคาพยากรณ์เป็นบาทตามความบริสุทธิ์ที่เลือก
+if purity == "96.5%":
+    pred_future_baht = (pred_spot * 0.473 * thb_rate) * 32.148 / 28.3495
+else:
+    pred_future_baht = (pred_spot / 31.1035) * 15.16 * thb_rate
 
-# --- 7. PORTFOLIO VIEW ---
-sheet = init_gsheet()
-if sheet:
-    st.subheader("📜 ประวัติการลงทุนของคุณ")
-    data = pd.DataFrame(sheet.get_all_records())
-    if not data.empty:
-        data['Current_Val'] = (data['Total_Gram'] / 15.244) * current_thai_price
-        data['PnL'] = data['Current_Val'] - data['Total_Cost']
-        st.dataframe(data.style.format({"PnL": "{:,.2f}"}), use_container_width=True)
-        st.metric("กำไร/ขาดทุนรวม", f"{data['PnL'].sum():,.2f} ฿")
+st.markdown(f"### ราคาคาดการณ์ในอีก {years} ปี: **{pred_future_baht:,.0f} ฿**")
+
+# สรุปกำไรตามน้ำหนักที่ User มี
+total_future_value = (gram_weight / (15.244 if purity == "96.5%" else 15.16)) * pred_future_baht
+total_profit = total_future_value - total_cost
+
+if total_cost > 0:
+    st.subheader(f"💰 กำไรคาดการณ์ของคุณ: :green[{total_profit:,.0f} ฿]")
